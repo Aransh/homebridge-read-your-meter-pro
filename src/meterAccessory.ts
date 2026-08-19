@@ -1,27 +1,42 @@
-import type { PlatformAccessory, Service } from 'homebridge';
+import type { CharacteristicValue, PlatformAccessory, Service } from 'homebridge';
 
 import type { RymProPlatform } from './platform.js';
 import type { MeterSnapshot } from './rympro.js';
-import { LUX_MAX, LUX_MIN, type ResolvedConfig, type VolumeUnit } from './settings.js';
-
-type SubType =
-  | 'daily'
-  | 'monthly'
-  | 'forecast'
-  | 'total'
-  | 'daily-alert'
-  | 'monthly-alert';
+import {
+  DEFAULT_NAMES,
+  isValidHomeKitName,
+  LUX_MAX,
+  LUX_MIN,
+  SENSOR_KEYS,
+  type ResolvedConfig,
+  type SensorKey,
+  type VolumeUnit,
+} from './settings.js';
 
 interface ServiceSpec {
-  subtype: SubType;
+  key: SensorKey;
   name: string;
   kind: 'light' | 'leak';
 }
 
+const SENSOR_KINDS: Record<SensorKey, 'light' | 'leak'> = {
+  daily: 'light',
+  monthly: 'light',
+  forecast: 'light',
+  total: 'light',
+  'daily-alert': 'leak',
+  'monthly-alert': 'leak',
+};
+
 export class MeterAccessory {
-  private readonly services = new Map<SubType, Service>();
+  private readonly services = new Map<SensorKey, Service>();
   private readonly unit: VolumeUnit;
   private readonly information: Service;
+  /**
+   * Names the user has chosen, kept in the accessory context so they live in
+   * Homebridge's accessory cache and survive a restart.
+   */
+  private readonly savedNames: Partial<Record<SensorKey, string>>;
 
   constructor(
     private readonly platform: RymProPlatform,
@@ -30,7 +45,11 @@ export class MeterAccessory {
   ) {
     this.unit = config.unit;
     const { Service, Characteristic } = platform;
-    const meterCount = accessory.context.meterCount as number;
+    const context = accessory.context as {
+      meterCount?: number;
+      names?: Partial<Record<SensorKey, string>>;
+    };
+    this.savedNames = (context.names ??= {});
 
     this.information = (
       accessory.getService(Service.AccessoryInformation) ??
@@ -38,43 +57,45 @@ export class MeterAccessory {
     )
       .setCharacteristic(Characteristic.Manufacturer, 'Arad / Read Your Meter Pro')
       .setCharacteristic(Characteristic.Model, 'Water Meter')
-      .setCharacteristic(Characteristic.SerialNumber, String(meterCount));
+      .setCharacteristic(Characteristic.SerialNumber, String(context.meterCount));
 
     this.buildServices();
   }
 
+  /**
+   * The name a sensor should carry. A name pinned in config.json wins, so there
+   * is always a way to force a name from the Homebridge UI; otherwise whatever
+   * the user last set in the Home app wins; the built-in name is only the
+   * starting point.
+   */
+  private nameFor(key: SensorKey): string {
+    const override = this.config.nameOverrides[key];
+    if (override) {
+      return override;
+    }
+    const saved = this.savedNames[key];
+    if (saved && isValidHomeKitName(saved)) {
+      return saved;
+    }
+    return DEFAULT_NAMES[key];
+  }
+
   /** Which services this accessory should expose, given the current config. */
   private desiredServices(): ServiceSpec[] {
-    // HomeKit requires names to start and end with a letter or digit, and
-    // rejects symbols like the superscript in "m³" — so no units in the name.
-    // The unit is a config choice and is documented in the plugin settings.
-    const specs: ServiceSpec[] = [
-      { subtype: 'daily', name: 'Water Today', kind: 'light' },
-      { subtype: 'monthly', name: 'Water This Month', kind: 'light' },
-    ];
-
-    if (this.config.exposeForecast) {
-      specs.push({ subtype: 'forecast', name: 'Water Forecast', kind: 'light' });
-    }
-    if (this.config.exposeTotal) {
-      specs.push({ subtype: 'total', name: 'Water Meter Total', kind: 'light' });
-    }
-    if (this.config.dailyThreshold > 0) {
-      specs.push({ subtype: 'daily-alert', name: 'Water Daily Alert', kind: 'leak' });
-    }
-    if (this.config.monthlyThreshold > 0) {
-      specs.push({ subtype: 'monthly-alert', name: 'Water Monthly Alert', kind: 'leak' });
-    }
-    return specs;
+    return SENSOR_KEYS.filter((key) => this.config.expose[key]).map((key) => ({
+      key,
+      name: this.nameFor(key),
+      kind: SENSOR_KINDS[key],
+    }));
   }
 
   private buildServices(): void {
     const { Service, Characteristic } = this.platform;
     const specs = this.desiredServices();
-    const wanted = new Set<string>(specs.map((s) => s.subtype));
+    const wanted = new Set<string>(specs.map((s) => s.key));
 
-    // Remove services left over from a previous config (e.g. a threshold that
-    // was set to 0, or the forecast sensor being switched off).
+    // Remove services left over from a previous config (e.g. a sensor that was
+    // switched off, or a threshold that was set back to 0).
     for (const service of [...this.accessory.services]) {
       const subtype = service.subtype;
       if (
@@ -91,17 +112,28 @@ export class MeterAccessory {
 
     for (const spec of specs) {
       const type = spec.kind === 'light' ? Service.LightSensor : Service.LeakSensor;
-      const service =
-        this.accessory.getServiceById(type, spec.subtype) ??
-        this.accessory.addService(type, spec.name, spec.subtype);
+      const existing = this.accessory.getServiceById(type, spec.key);
+      const service = existing ?? this.accessory.addService(type, spec.name, spec.key);
 
-      service.setCharacteristic(Characteristic.Name, spec.name);
+      // Installs that predate name persistence have the user's rename on the
+      // restored service but nothing in the context; adopt it rather than
+      // resetting them one last time.
+      if (existing && !this.savedNames[spec.key]) {
+        this.adoptExistingName(spec, existing);
+      }
+
+      const name = this.nameFor(spec.key);
+      service.setCharacteristic(Characteristic.Name, name);
       if (Characteristic.ConfiguredName) {
-        // Lets the Home app show a sane per-service label instead of "Sensor".
+        // Lets the Home app show a sane per-service label instead of "Sensor",
+        // and is what the Home app writes back when the user renames a tile.
         if (!service.testCharacteristic(Characteristic.ConfiguredName)) {
           service.addOptionalCharacteristic(Characteristic.ConfiguredName);
         }
-        service.updateCharacteristic(Characteristic.ConfiguredName, spec.name);
+        service.updateCharacteristic(Characteristic.ConfiguredName, name);
+        service
+          .getCharacteristic(Characteristic.ConfiguredName)
+          .onSet((value) => this.rememberName(spec.key, value));
       }
       service.setCharacteristic(Characteristic.StatusActive, true);
       service.setCharacteristic(
@@ -109,7 +141,43 @@ export class MeterAccessory {
         Characteristic.StatusFault.NO_FAULT,
       );
 
-      this.services.set(spec.subtype, service);
+      this.services.set(spec.key, service);
+    }
+  }
+
+  private adoptExistingName(spec: ServiceSpec, service: Service): void {
+    const current = service.testCharacteristic(this.platform.Characteristic.ConfiguredName)
+      ? service.getCharacteristic(this.platform.Characteristic.ConfiguredName).value
+      : service.getCharacteristic(this.platform.Characteristic.Name).value;
+    if (
+      typeof current === 'string' &&
+      current !== DEFAULT_NAMES[spec.key] &&
+      isValidHomeKitName(current)
+    ) {
+      this.savedNames[spec.key] = current;
+      this.platform.saveAccessoryContext(this.accessory);
+    }
+  }
+
+  /** Records a rename made in the Home app so the next restart keeps it. */
+  private rememberName(key: SensorKey, value: CharacteristicValue): void {
+    const name = String(value).trim();
+    if (name.length === 0 || !isValidHomeKitName(name)) {
+      return;
+    }
+    if (this.savedNames[key] === name) {
+      return;
+    }
+    this.savedNames[key] = name;
+    this.platform.saveAccessoryContext(this.accessory);
+    const override = this.config.nameOverrides[key];
+    if (override && override !== name) {
+      this.platform.log.warn(
+        `Renamed "${key}" to "${name}", but config.json pins it to "${override}", ` +
+          'which will win on the next restart. Clear that setting to keep renaming from the Home app.',
+      );
+    } else {
+      this.platform.log.info(`Remembered the new name for "${key}": ${name}`);
     }
   }
 
@@ -131,19 +199,16 @@ export class MeterAccessory {
     // 100000 lux ceiling within a couple of years of normal household use.
     this.setLux('total', snapshot.total);
 
+    if (snapshot.serial) {
+      // The physical serial only arrives with the first poll, so it cannot be
+      // set in the constructor.
+      this.information.updateCharacteristic(Characteristic.SerialNumber, snapshot.serial);
+    }
+
     // With no reading there is nothing to compare, so the alert stays clear
     // rather than tripping or clearing on invented data.
     if (daily !== null) {
-      if (snapshot.serial) {
-      // The physical serial only arrives with the first poll, so it cannot be
-      // set in the constructor.
-      this.information.updateCharacteristic(
-        this.platform.Characteristic.SerialNumber,
-        snapshot.serial,
-      );
-    }
-
-    this.setLeak('daily-alert', daily >= this.config.dailyThreshold);
+      this.setLeak('daily-alert', daily >= this.config.dailyThreshold);
     }
     if (monthly !== null) {
       this.setLeak('monthly-alert', monthly >= this.config.monthlyThreshold);
@@ -177,8 +242,8 @@ export class MeterAccessory {
     }
   }
 
-  private setLux(subtype: SubType, value: number | null): void {
-    const service = this.services.get(subtype);
+  private setLux(key: SensorKey, value: number | null): void {
+    const service = this.services.get(key);
     if (!service) {
       return;
     }
@@ -198,8 +263,8 @@ export class MeterAccessory {
     );
   }
 
-  private setLeak(subtype: SubType, tripped: boolean): void {
-    const service = this.services.get(subtype);
+  private setLeak(key: SensorKey, tripped: boolean): void {
+    const service = this.services.get(key);
     if (!service) {
       return;
     }

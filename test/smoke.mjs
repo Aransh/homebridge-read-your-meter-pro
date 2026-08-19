@@ -142,6 +142,15 @@ plugin(api);
 // ------------------------------------------------------------------ run tests
 
 const settled = () => new Promise((r) => setTimeout(r, 60));
+/**
+ * Fires didFinishLaunching for the most recently constructed platform only.
+ * Every platform in this file registers its own handler on the shared api
+ * shim, so firing all of them would start long-finished platforms again.
+ */
+const launch = async () => {
+  handlers.didFinishLaunching?.at(-1)?.();
+  await settled();
+};
 const statePath = join(storagePath, '.read-your-meter-pro.json');
 let firstDeviceId;
 
@@ -173,10 +182,7 @@ const platform = new api._ctor(
   api,
 );
 
-for (const cb of handlers.didFinishLaunching ?? []) {
-  cb();
-}
-await settled();
+await launch();
 
 assert.equal(registered.length, 1, 'one accessory registered');
 const accessory = registered[0];
@@ -195,9 +201,9 @@ const byName = (name) =>
 
 const lux = (name) => byName(name).getCharacteristic(Characteristic.CurrentAmbientLightLevel).value;
 
-assert.equal(lux('Water Today'), 734, 'daily 0.734 m³ -> 734 L');
-assert.equal(lux('Water This Month'), 14200);
-assert.equal(lux('Water Forecast'), 21800);
+assert.equal(lux('Water Usage Today'), 734, 'daily 0.734 m³ -> 734 L');
+assert.equal(lux('Water Usage This Month'), 14200);
+assert.equal(lux('Water Monthly Forecast'), 21800);
 assert.equal(lux('Water Meter Total'), 812.345, 'total stays in m³');
 console.log('✓ light sensors carry the right values');
 
@@ -207,7 +213,7 @@ assert.equal(leak('Water Monthly Alert'), 0, '14200 L is under the 20000 L month
 console.log('✓ leak sensors trip on threshold, not before');
 
 assert.equal(
-  byName('Water Today').getCharacteristic(Characteristic.StatusFault).value,
+  byName('Water Usage Today').getCharacteristic(Characteristic.StatusFault).value,
   Characteristic.StatusFault.NO_FAULT,
 );
 
@@ -235,11 +241,11 @@ console.log('✓ accessory information uses the physical meter serial');
 {
   dailyIsNull = true;
   await platform.poll();
-  assert.equal(lux('Water Today'), 734, 'a null reading must not overwrite the last known value');
+  assert.equal(lux('Water Usage Today'), 734, 'a null reading must not overwrite the last known value');
   assert.equal(leak('Water Daily Alert'), 1, 'a null reading must not clear a tripped alert');
   dailyIsNull = false;
   await platform.poll();
-  assert.equal(lux('Water Today'), 734);
+  assert.equal(lux('Water Usage Today'), 734);
   console.log('✓ null daily reading is held, not reported as zero');
 }
 
@@ -268,7 +274,7 @@ console.log('✓ accessory information uses the physical meter serial');
   calls.length = 0;
   await platform.poll();
   assert.equal(loginCount, before + 1, 'exactly one re-login');
-  assert.equal(lux('Water Today'), 734, 'data still refreshed after re-auth');
+  assert.equal(lux('Water Usage Today'), 734, 'data still refreshed after re-auth');
   assert.ok(
     !logs.slice(logMark).some(([lvl]) => lvl === 'error' || lvl === 'warn'),
     'a token refresh should be silent, not a warning',
@@ -296,16 +302,16 @@ console.log('✓ accessory information uses the physical meter serial');
   await platform.poll();
   globalThis.fetch = realFetch;
   assert.equal(
-    byName('Water Today').getCharacteristic(Characteristic.StatusFault).value,
+    byName('Water Usage Today').getCharacteristic(Characteristic.StatusFault).value,
     Characteristic.StatusFault.GENERAL_FAULT,
   );
-  assert.equal(byName('Water Today').getCharacteristic(Characteristic.StatusActive).value, false);
+  assert.equal(byName('Water Usage Today').getCharacteristic(Characteristic.StatusActive).value, false);
   assert.ok(logs.some(([lvl, m]) => lvl === 'warn' && m.includes('retry on the next poll')));
   console.log('✓ transient failure sets StatusFault and keeps polling');
 
   await platform.poll();
   assert.equal(
-    byName('Water Today').getCharacteristic(Characteristic.StatusFault).value,
+    byName('Water Usage Today').getCharacteristic(Characteristic.StatusFault).value,
     Characteristic.StatusFault.NO_FAULT,
   );
   console.log('✓ fault clears on recovery');
@@ -331,13 +337,10 @@ console.log('✓ accessory information uses the physical meter serial');
     api,
   );
   cold.configureAccessory(cached);
-  for (const cb of handlers.didFinishLaunching ?? []) {
-    cb();
-  }
-  await settled();
+  await launch();
   globalThis.fetch = realFetch;
 
-  const svc = cached.services.find((s) => s.displayName === 'Water Today');
+  const svc = cached.services.find((s) => s.displayName === 'Water Usage Today');
   assert.equal(
     svc.getCharacteristic(Characteristic.StatusFault).value,
     Characteristic.StatusFault.GENERAL_FAULT,
@@ -364,10 +367,7 @@ console.log('✓ accessory information uses the physical meter serial');
     { platform: 'ReadYourMeterPro', email: 'aran@example.com', password: 'wrong' },
     api,
   );
-  for (const cb of handlers.didFinishLaunching ?? []) {
-    cb();
-  }
-  await settled();
+  await launch();
   assert.ok(
     logs.some(([lvl, m]) => lvl === 'error' && m.includes('Polling stopped')),
     'should stop and say so',
@@ -377,7 +377,84 @@ console.log('✓ accessory information uses the physical meter serial');
   console.log('✓ rejected credentials stop the loop with a clear error');
 }
 
-// 8. Turning a threshold off removes the service on the next start.
+// 7b. A rename in the Home app survives a restart.
+{
+  const cached = registered[0];
+  const configured = (acc) =>
+    acc.services
+      .find((s) => s.subtype === 'daily')
+      .getCharacteristic(Characteristic.ConfiguredName);
+
+  // What the Home app does when the user renames the tile.
+  await configured(cached).handleSetRequest('Garden Tap Today');
+  assert.equal(
+    cached.context.names.daily,
+    'Garden Tap Today',
+    'a rename must be recorded in the accessory context, which is what gets cached',
+  );
+  assert.ok(updated.includes(cached), 'the context change must be flushed to the accessory cache');
+
+  const renamed = new api._ctor(
+    log,
+    {
+      platform: 'ReadYourMeterPro',
+      email: 'aran@example.com',
+      password: 'correct-horse',
+      dailyThreshold: 500,
+    },
+    api,
+  );
+  renamed.configureAccessory(cached);
+  await launch();
+  assert.equal(
+    configured(cached).value,
+    'Garden Tap Today',
+    'a restart must not reset the name the user chose',
+  );
+  console.log('✓ Home app renames survive a restart');
+
+  // A name pinned in config.json is the documented escape hatch, so it wins.
+  const pinned = new api._ctor(
+    log,
+    {
+      platform: 'ReadYourMeterPro',
+      email: 'aran@example.com',
+      password: 'correct-horse',
+      dailyThreshold: 500,
+      nameDaily: 'Water Used Today',
+    },
+    api,
+  );
+  pinned.configureAccessory(cached);
+  await launch();
+  assert.equal(configured(cached).value, 'Water Used Today', 'config must override a rename');
+  console.log('✓ a name pinned in config wins over a Home app rename');
+
+  // An invalid name is refused rather than passed to HomeKit, which would
+  // silently drop the whole accessory.
+  const logMark = logs.length;
+  const bogus = new api._ctor(
+    log,
+    {
+      platform: 'ReadYourMeterPro',
+      email: 'aran@example.com',
+      password: 'correct-horse',
+      nameDaily: 'Water (m³)',
+    },
+    api,
+  );
+  assert.equal(bogus.settings.nameOverrides.daily, undefined);
+  assert.ok(
+    logs.slice(logMark).some(([lvl, m]) => lvl === 'warn' && m.includes('not a name HomeKit accepts')),
+    'an unusable name must be reported',
+  );
+  console.log('✓ names HomeKit would reject are ignored with a warning');
+
+  // Reset for the teardown test below: drop the pinned name and the rename.
+  delete cached.context.names.daily;
+}
+
+// 8. Every sensor can be switched off, and de-configured ones are removed.
 {
   const cached = registered[0];
   const p2 = new api._ctor(
@@ -388,22 +465,27 @@ console.log('✓ accessory information uses the physical meter serial');
       password: 'correct-horse',
       dailyThreshold: 0,
       monthlyThreshold: 0,
+      exposeMonthly: false,
       exposeForecast: false,
       exposeTotal: false,
     },
     api,
   );
   p2.configureAccessory(cached);
-  for (const cb of handlers.didFinishLaunching ?? []) {
-    cb();
-  }
-  await settled();
+  await launch();
   const names = cached.services.map((s) => s.displayName);
   assert.ok(!names.includes('Water Daily Alert'), `stale service kept: ${names.join(', ')}`);
-  assert.ok(!names.includes('Water Forecast'));
-  assert.ok(names.includes('Water Today'));
+  assert.ok(!names.includes('Water Monthly Forecast'));
+  assert.ok(!names.includes('Water Usage This Month'), 'the monthly sensor must be removable');
+  assert.ok(names.includes('Water Usage Today'));
   console.log('✓ de-configured services are cleaned up, cached accessory reused');
   assert.equal(registered.length, 1, 'no duplicate accessory registered');
+
+  // A threshold of 0 is the only off switch for an alert, and it must win: an
+  // alert with no threshold would report a leak on every single poll.
+  assert.equal(p2.settings.expose['daily-alert'], false);
+  assert.equal(p2.settings.expose['monthly-alert'], false);
+  console.log('✓ a threshold of 0 keeps the alert sensor away entirely');
 
   await p2.flushState();
   const { readFileSync } = await import('node:fs');

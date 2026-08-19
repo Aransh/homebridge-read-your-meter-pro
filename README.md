@@ -11,17 +11,21 @@ Unofficial, and not affiliated with Arad Group or any water corporation.
 HomeKit Accessory Protocol for volume or metering, so there is no honest way to
 show "0.734 m³" in the Home app. This plugin works around that:
 
-| What you get | How | Where it shows |
-| --- | --- | --- |
-| Today's consumption | Light sensor `Water Today` | Home app, as `734 lux` |
-| This month's consumption | Light sensor `Water This Month` | Home app, as `14200 lux` |
-| Month-end forecast | Light sensor `Water Forecast` | Home app |
-| Cumulative meter reading | Light sensor `Water Meter Total` | Home app, optional, always m³ |
-| Daily threshold exceeded | Leak sensor `Water Daily Alert` | Home app, notifications, automations |
-| Monthly threshold exceeded | Leak sensor `Water Monthly Alert` | Home app, notifications, automations |
+| What you get | How | Default name | On by default |
+| --- | --- | --- | --- |
+| Today's consumption | Light sensor | `Water Usage Today` | yes |
+| This month's consumption | Light sensor | `Water Usage This Month` | yes |
+| Month-end forecast | Light sensor | `Water Monthly Forecast` | yes |
+| Cumulative meter reading | Light sensor, always m³ | `Water Meter Total` | no |
+| Daily threshold exceeded | Leak sensor | `Water Daily Alert` | when a threshold is set |
+| Monthly threshold exceeded | Leak sensor | `Water Monthly Alert` | when a threshold is set |
+
+Light sensors show up in the Home app as a number and the word `lux` — `734 lux`
+means 734 litres. Every sensor can be switched off individually, and every name
+can be changed, either in the Home app or in config.json.
 
 The word "lux" is wrong and there is nothing to be done about it. The number is
-correct. Service names carry no unit, because HomeKit rejects names that end in
+correct. Default names carry no unit, because HomeKit rejects names that end in
 punctuation or contain symbols like `³`.
 
 ### Why a light sensor?
@@ -80,8 +84,8 @@ Use the Homebridge UI settings form, or add to `config.json`:
       "password": "your-portal-password",
       "unit": "liters",
       "pollInterval": 60,
-      "dailyThreshold": 500,
-      "monthlyThreshold": 20000,
+      "dailyThreshold": 800,
+      "monthlyThreshold": 14000,
       "exposeForecast": true,
       "exposeTotal": false
     }
@@ -95,10 +99,56 @@ Use the Homebridge UI settings form, or add to `config.json`:
 | `password` | — | Required. |
 | `unit` | `liters` | `liters` or `cubic_meters`. Applies to daily/monthly/forecast. |
 | `pollInterval` | `60` | Minutes. Floored at 15. |
-| `dailyThreshold` | `0` | In `unit`. `0` removes the sensor. |
-| `monthlyThreshold` | `0` | In `unit`. `0` removes the sensor. |
+| `dailyThreshold` | `0` | In `unit`. `0` removes the daily alert sensor. |
+| `monthlyThreshold` | `0` | In `unit`. `0` removes the monthly alert sensor. |
+| `exposeDaily` | `true` | Today's consumption. |
+| `exposeMonthly` | `true` | This month's consumption. |
 | `exposeForecast` | `true` | Month-end estimate. |
 | `exposeTotal` | `false` | Cumulative reading. Always m³. |
+| `nameDaily` … `nameMonthlyAlert` | — | Pin a sensor's name. See [Naming](#naming). |
+
+### Choosing thresholds
+
+The alerts are the part you actually get notified by, so they are worth setting.
+There is no single right number — it depends on how many people live in the
+house, whether you have a garden, and what the season is. Two anchors:
+
+- **Monthly.** The subsidised household allocation in Israel is 3.5 m³ per
+  person per month; past that, water costs roughly double. Setting
+  `monthlyThreshold` to `3500 × people` (14000 L for a family of four) turns the
+  alert into "from here on, this is expensive water".
+- **Daily.** Israeli domestic use runs around 100–200 L per person per day.
+  Something around double a normal day is a reasonable alarm — roughly
+  `400 × people` litres, so 1600 L for a family of four — high enough that a
+  long shower or a load of laundry does not trip it, low enough to catch a stuck
+  irrigation valve or a running toilet within a day.
+
+Then correct with your own data: run for a week with Homebridge debug logging on
+and look at the `today=` and `month=` lines, or read the same figures in the
+Read Your Meter Pro app. Set the daily threshold above your worst normal day.
+
+Note what these alerts are and are not. They fire on *cumulative consumption in
+the period*, so a daily alert stays tripped until midnight and a monthly one
+until the month rolls over — they are budget alarms, not flow detectors. The
+portal only publishes hourly at best, so a burst pipe is caught in hours, not
+seconds.
+
+### Naming
+
+Every sensor name can be changed, and the change sticks:
+
+- **Rename in the Home app** (long-press a tile → settings → name). The plugin
+  records the new name in Homebridge's accessory cache, so restarts keep it.
+- **Or pin it in config.json** with `nameDaily`, `nameMonthly`, `nameForecast`,
+  `nameTotal`, `nameDailyAlert`, `nameMonthlyAlert`. A name set here wins over a
+  rename made in the Home app, and will overwrite one on the next restart — it
+  is the escape hatch, not the normal path. Leave these empty to rename in the
+  Home app instead.
+
+HomeKit only accepts names that start and end with a letter or digit (Hebrew
+counts), and that otherwise contain letters, digits, spaces, apostrophes,
+commas, periods or hyphens. Anything else is ignored with a warning rather than
+handed to HomeKit, which would silently refuse to add the accessory at all.
 
 ### Why litres by default
 
@@ -115,6 +165,22 @@ below 15 minutes.
 
 ## Behaviour worth knowing
 
+- **Missing readings**: the portal publishes today's figure some hours into the
+  day, and returns `cons: null` until it does. That is not the same as zero water
+  used, so the plugin does not report it as zero — it leaves the sensor showing
+  the last value it had. In practice that means `Water Usage Today` shows *yesterday's*
+  total for part of the morning, then jumps to today's once the portal catches
+  up. On a brand-new install there is no previous value to keep, so the sensor
+  sits at `0.0001 lux` (HomeKit's floor for a light sensor, and the same value a
+  genuine zero reads as) until the first real reading lands. The alerts do not
+  trip or clear while a reading is missing.
+- **Forecast**: `Water Monthly Forecast` is the portal's own estimate of what the
+  whole current calendar month will add up to, not a rolling 30-day figure — so
+  it is directly comparable to `monthlyThreshold`, and early in the month it is a
+  rough number extrapolated from a few days. It is the flakiest endpoint; when it
+  fails the rest of the poll still succeeds and the sensor holds its last value.
+- **Names**: a rename in the Home app is stored in Homebridge's accessory cache
+  and survives restarts. See [Naming](#naming) for the config.json override.
 - **Auth**: the plugin logs in once, caches the bearer token, and re-authenticates
   silently on a 401. If the portal rejects your credentials outright it stops
   polling and logs an error rather than retrying on a timer and risking a lockout.
@@ -133,8 +199,8 @@ below 15 minutes.
   accessories are still wired up so they report the fault instead of sitting at
   default values, and the plugin retries every minute until it has something to
   show before settling into the configured interval.
-- **Reconfiguration**: setting a threshold to `0`, or turning off the forecast or
-  total, removes those services on the next restart instead of leaving ghosts.
+- **Reconfiguration**: switching a sensor off, or setting a threshold back to
+  `0`, removes that service on the next restart instead of leaving a ghost.
 
 ## Development
 
@@ -148,6 +214,30 @@ npm test        # lint + build + smoke tests against a mocked portal
 The smoke tests need no credentials and touch no network: they stub `fetch` with
 a fake portal and drive the plugin through Homebridge's real `PlatformAccessory`
 and HAP-NodeJS `Service`/`Characteristic` classes. CI runs them on Node 22 and 24.
+
+### Releasing
+
+Releasing is a manual, deliberate act:
+
+1. Bump the version: `npm version 1.0.0 --no-git-tag-version`. Commit and merge it.
+2. Actions → **release** → *Run workflow*. Give it the tag (`v1.0.0`), tick
+   **prerelease** for anything like `v1.0.0-beta.2`, and run it.
+
+The workflow re-runs the whole build on both Node versions, publishes to npm with
+provenance, then creates the tag and a GitHub release with generated notes. Tick
+**dry run** to build and pack without publishing anything.
+
+It refuses to do the wrong thing rather than doing it quietly: the tag has to
+match the version in `package.json` (npm publishes what `package.json` says, not
+what you typed), the tag must not already exist, and a prerelease version with
+the prerelease box unticked is rejected instead of being published as npm
+`latest`. Prereleases publish under their own dist-tag — `1.0.0-beta.1` goes out
+as `beta`, so `npm install -g` keeps giving people the stable line. Override with
+the `npm_tag` input if you need something else.
+
+The only setup required is an `NPM_TOKEN` repository secret — an npm **automation**
+or **granular access** token, since a classic token with 2FA enabled is rejected
+in CI.
 
 ## Verifying the API against your account
 

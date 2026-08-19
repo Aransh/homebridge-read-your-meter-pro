@@ -1,0 +1,187 @@
+name: release
+
+# Manual only. Bump the version in package.json, merge that, then run this
+# workflow from the Actions tab with the matching tag. It re-runs the full build,
+# publishes to npm with provenance, and creates the tag and GitHub release.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release, e.g. v1.0.0 or v1.0.0-beta.2. Must match the version in package.json.'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as a prerelease on GitHub and keep it off the npm "latest" tag.'
+        required: false
+        default: false
+        type: boolean
+      npm_tag:
+        description: 'npm dist-tag override. Leave empty for "latest", or the prerelease name (beta, rc, …) when prerelease is checked.'
+        required: false
+        default: ''
+        type: string
+      dry_run:
+        description: 'Build and pack only. Publishes nothing and creates no tag.'
+        required: false
+        default: false
+        type: boolean
+
+# Never let two releases race for the same tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Everything that can be wrong with the request, checked before anything is
+  # published — npm publishes whatever package.json says, so a tag that
+  # disagrees with it would tag one version and ship another.
+  check:
+    runs-on: ubuntu-latest
+    # A fork must never publish this package.
+    if: github.repository == 'Aransh/homebridge-read-your-meter-pro'
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      npm-tag: ${{ steps.resolve.outputs.npm_tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Tags are the record of what has already been released.
+          fetch-depth: 0
+
+      - name: Validate the request
+        id: resolve
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_NPM_TAG: ${{ inputs.npm_tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          tag="${INPUT_TAG#v}"
+          if ! [[ "${tag}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::\"${INPUT_TAG}\" is not a version tag. Expected v1.2.3 or v1.2.3-beta.1."
+            exit 1
+          fi
+          version="${tag}"
+          tag="v${version}"
+
+          packaged=$(node -p "require('./package.json').version")
+          if [[ "${packaged}" != "${version}" ]]; then
+            echo "::error::package.json is at ${packaged}, but you asked to release ${tag}. Bump the version, merge it, then run this again."
+            exit 1
+          fi
+
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "::error::${tag} already exists. Releases are immutable — pick a new version."
+            exit 1
+          fi
+
+          # Resolve the npm dist-tag. Publishing a prerelease as "latest" would
+          # hand it to everyone running `npm install -g`, so that combination is
+          # refused unless it is asked for explicitly.
+          if [[ -n "${INPUT_NPM_TAG}" ]]; then
+            npm_tag="${INPUT_NPM_TAG}"
+          elif [[ "${PRERELEASE}" == "true" ]]; then
+            if [[ "${version}" == *-* ]]; then
+              suffix="${version#*-}"
+              npm_tag="${suffix%%.*}"
+            else
+              npm_tag="next"
+            fi
+          elif [[ "${version}" == *-* ]]; then
+            echo "::error::${version} looks like a prerelease but \"prerelease\" is unchecked, which would publish it as npm \"latest\". Check the box, or set npm_tag explicitly."
+            exit 1
+          else
+            npm_tag="latest"
+          fi
+
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "npm_tag=${npm_tag}" >> "$GITHUB_OUTPUT"
+          echo "::notice::Releasing ${tag} to npm as \"${npm_tag}\" (prerelease: ${PRERELEASE}, dry run: ${{ inputs.dry_run }})."
+
+  # Reuses the normal build so a publish can only happen on a commit that passes
+  # lint, build, the smoke tests on both LTS versions, and the packing check.
+  verify:
+    needs: check
+    uses: ./.github/workflows/build.yml
+
+  publish:
+    needs: [check, verify]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the tag and the GitHub release
+      # OIDC, which is how npm authenticates this job. There is deliberately no
+      # npm token anywhere in this workflow: npm's trusted publishing swaps this
+      # short-lived GitHub identity for publish rights, and generates the
+      # provenance attestation as a side effect.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          # Trusted publishing needs npm 11.5.1+, which Node 22 does not ship.
+          node-version: 24.x
+          # No dependency cache: npm advises against one for release builds.
+          registry-url: https://registry.npmjs.org
+
+      # Belt and braces — the npm bundled with a given Node 24 patch release is
+      # not guaranteed to be new enough, and the failure mode is an opaque
+      # ENEEDAUTH at publish time.
+      - name: Ensure npm can use trusted publishing
+        run: |
+          set -euo pipefail
+          npm install -g npm@latest
+          npm --version
+
+      - run: npm ci
+
+      - name: Publish to npm
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          NPM_TAG: ${{ needs.check.outputs.npm-tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          name=$(node -p "require('./package.json').name")
+
+          if [[ "${DRY_RUN}" == "true" ]]; then
+            npm publish --dry-run --tag "${NPM_TAG}"
+            echo "::notice::Dry run: nothing was published."
+            exit 0
+          fi
+
+          # Guarded so a re-run after a partial failure finishes the release
+          # instead of erroring on work that already landed.
+          if npm view "${name}@${VERSION}" version >/dev/null 2>&1; then
+            echo "::notice::${name}@${VERSION} is already on npm — skipping publish."
+            exit 0
+          fi
+          # prepublishOnly runs lint + build + the smoke tests once more here.
+          npm publish --provenance --access public --tag "${NPM_TAG}"
+
+      - name: Tag and create the GitHub release
+        if: inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.check.outputs.tag }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "::notice::Release ${TAG} already exists — nothing to do."
+            exit 0
+          fi
+          # gh creates the tag at --target, so there is no separate tag push.
+          gh release create "${TAG}" \
+            --target "${GITHUB_SHA}" \
+            --title "${TAG}" \
+            --generate-notes \
+            $([ "${PRERELEASE}" = "true" ] && echo --prerelease)
