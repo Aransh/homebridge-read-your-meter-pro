@@ -19,6 +19,8 @@ let loginCount = 0;
 let expireNextGet = false;
 
 const METER_ID = 55123;
+const METER_SERIAL = '000811515025';
+let dailyIsNull = false;
 
 globalThis.fetch = async (url, init = {}) => {
   calls.push(`${init.method ?? 'GET'} ${String(url).replace(/^https:\/\/[^/]+/, '')}`);
@@ -42,13 +44,44 @@ globalThis.fetch = async (url, init = {}) => {
   assert.match(init.headers['x-access-token'], /^token-/);
 
   if (path === '/consumption/last-read') {
-    return json([{ meterCount: METER_ID, read: 812.345, meterSn: 'AV22H1A' }]);
+    return json([{ meterCount: METER_ID, meterId: METER_SERIAL, read: 812.345 }]);
   }
   if (path.startsWith(`/consumption/daily/${METER_ID}/`)) {
-    return json([{ cons: 0.734 }]);
+    if (dailyIsNull) {
+      // Exactly what the portal returns before today's reading is published.
+      return json([
+        {
+          meterCount: METER_ID,
+          consDate: '2026-08-19T00:00:00',
+          cons: null,
+          estimationType: 0,
+          commonCons: 0,
+          meterStatusDesc: '-',
+        },
+      ]);
+    }
+    return json([
+      {
+        meterCount: METER_ID,
+        consDate: '2026-08-19T00:00:00',
+        cons: 0.734,
+        estimationType: 1,
+        commonCons: 0,
+        meterStatusDesc: '-',
+      },
+    ]);
   }
   if (path.startsWith(`/consumption/monthly/${METER_ID}/`)) {
-    return json([{ cons: 14.2 }]);
+    return json([
+      {
+        meterCount: METER_ID,
+        consDate: '2026-08-01T00:00:00',
+        cons: 14.2,
+        estimationType: 1,
+        commonCons: 0,
+        meterStatusDesc: '-',
+      },
+    ]);
   }
   if (path === `/consumption/forecast/${METER_ID}`) {
     return json({ estimatedConsumption: 21.8 });
@@ -168,8 +201,12 @@ assert.equal(
 );
 
 const info = accessory.getService(Service.AccessoryInformation);
-assert.equal(info.getCharacteristic(Characteristic.SerialNumber).value, String(METER_ID));
-console.log('✓ accessory information populated');
+assert.equal(
+  info.getCharacteristic(Characteristic.SerialNumber).value,
+  METER_SERIAL,
+  'serial should be the physical meterId, not the meterCount',
+);
+console.log('✓ accessory information uses the physical meter serial');
 
 // HomeKit silently refuses to add accessories whose Name characteristic starts
 // or ends with punctuation, or contains symbols like "³".
@@ -181,6 +218,18 @@ console.log('✓ accessory information populated');
   }
   assert.match(String(accessory.displayName), valid);
   console.log('✓ every service name is HomeKit-legal');
+}
+
+// 2b. A null daily reading means "not published yet", not zero.
+{
+  dailyIsNull = true;
+  await platform.poll();
+  assert.equal(lux('Water Today'), 734, 'a null reading must not overwrite the last known value');
+  assert.equal(leak('Water Daily Alert'), 1, 'a null reading must not clear a tripped alert');
+  dailyIsNull = false;
+  await platform.poll();
+  assert.equal(lux('Water Today'), 734);
+  console.log('✓ null daily reading is held, not reported as zero');
 }
 
 // 3. Zero consumption must floor at 0.0001, not throw a HAP warning.

@@ -21,6 +21,7 @@ interface ServiceSpec {
 export class MeterAccessory {
   private readonly services = new Map<SubType, Service>();
   private readonly unit: VolumeUnit;
+  private readonly information: Service;
 
   constructor(
     private readonly platform: RymProPlatform,
@@ -31,7 +32,7 @@ export class MeterAccessory {
     const { Service, Characteristic } = platform;
     const meterCount = accessory.context.meterCount as number;
 
-    (
+    this.information = (
       accessory.getService(Service.AccessoryInformation) ??
       accessory.addService(Service.AccessoryInformation)
     )
@@ -116,20 +117,37 @@ export class MeterAccessory {
     const { Characteristic } = this.platform;
     const factor = this.unit === 'liters' ? 1000 : 1;
 
-    const daily = snapshot.daily * factor;
-    const monthly = snapshot.monthly * factor;
+    const scale = (v: number | null) => (v === null ? null : v * factor);
+    const daily = scale(snapshot.daily);
+    const monthly = scale(snapshot.monthly);
 
+    // A null reading means "not published yet", not "zero". Leaving the last
+    // known value in place beats flashing a zero every morning; the very first
+    // poll has nothing to keep, so it floors instead.
     this.setLux('daily', daily);
     this.setLux('monthly', monthly);
-    if (snapshot.forecast !== null) {
-      this.setLux('forecast', snapshot.forecast * factor);
-    }
+    this.setLux('forecast', scale(snapshot.forecast));
     // Total is always m³: a cumulative reading in litres blows past the
     // 100000 lux ceiling within a couple of years of normal household use.
     this.setLux('total', snapshot.total);
 
+    // With no reading there is nothing to compare, so the alert stays clear
+    // rather than tripping or clearing on invented data.
+    if (daily !== null) {
+      if (snapshot.serial) {
+      // The physical serial only arrives with the first poll, so it cannot be
+      // set in the constructor.
+      this.information.updateCharacteristic(
+        this.platform.Characteristic.SerialNumber,
+        snapshot.serial,
+      );
+    }
+
     this.setLeak('daily-alert', daily >= this.config.dailyThreshold);
-    this.setLeak('monthly-alert', monthly >= this.config.monthlyThreshold);
+    }
+    if (monthly !== null) {
+      this.setLeak('monthly-alert', monthly >= this.config.monthlyThreshold);
+    }
 
     for (const service of this.services.values()) {
       service.updateCharacteristic(Characteristic.StatusActive, true);
@@ -140,11 +158,10 @@ export class MeterAccessory {
     }
 
     const unitLabel = this.unit === 'liters' ? 'L' : 'm³';
+    const show = (v: number | null) => (v === null ? 'no reading yet' : `${round(v)}${unitLabel}`);
     this.platform.debug(
-      `Meter ${snapshot.meterCount}: today=${round(daily)}${unitLabel} ` +
-        `month=${round(monthly)}${unitLabel} ` +
-        `forecast=${snapshot.forecast === null ? 'n/a' : round(snapshot.forecast * factor) + unitLabel} ` +
-        `total=${round(snapshot.total)}m³`,
+      `Meter ${snapshot.meterCount}: today=${show(daily)} month=${show(monthly)} ` +
+        `forecast=${show(scale(snapshot.forecast))} total=${round(snapshot.total)}m³`,
     );
   }
 
@@ -160,9 +177,13 @@ export class MeterAccessory {
     }
   }
 
-  private setLux(subtype: SubType, value: number): void {
+  private setLux(subtype: SubType, value: number | null): void {
     const service = this.services.get(subtype);
     if (!service) {
+      return;
+    }
+    if (value === null) {
+      // Keep whatever was last published rather than reporting a false zero.
       return;
     }
     if (value > LUX_MAX) {

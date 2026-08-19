@@ -16,8 +16,10 @@ export class UnauthorizedError extends Error {}
 export class OperationError extends Error {}
 
 export interface MeterRead {
-  /** Identifier used as `{meterId}` in the consumption endpoints. */
+  /** Identifier used in the consumption endpoint paths. */
   meterCount: number;
+  /** Physical meter serial, zero-padded string e.g. "000811515025". */
+  meterId?: string;
   /** Cumulative meter reading, in m³. */
   read: number;
   [key: string]: unknown;
@@ -27,13 +29,17 @@ export interface MeterSnapshot {
   meterCount: number;
   /** Cumulative reading, m³. */
   total: number;
-  /** Consumption so far today, m³. */
-  daily: number;
-  /** Consumption so far this month, m³. */
-  monthly: number;
+  /**
+   * Consumption so far today, m³. Null when the portal has produced no reading
+   * for today yet — it returns a row with `cons: null` for much of the day,
+   * which is not the same thing as zero water used.
+   */
+  daily: number | null;
+  /** Consumption so far this month, m³. Null if no reading yet. */
+  monthly: number | null;
   /** Forecast consumption for the full month, m³. Null if unavailable. */
   forecast: number | null;
-  /** Serial number as reported by the portal, when present. */
+  /** Physical meter serial, when reported. */
   serial?: string;
 }
 
@@ -128,7 +134,7 @@ export class RymProClient {
         daily,
         monthly,
         forecast,
-        serial: typeof meter.meterSn === 'string' ? meter.meterSn : undefined,
+        serial: typeof meter.meterId === 'string' ? meter.meterId : undefined,
       });
     }
     return snapshots;
@@ -136,18 +142,23 @@ export class RymProClient {
 
   private async periodConsumption(
     period: 'daily' | 'monthly',
-    meterId: number,
+    meterCount: number,
     date: string,
-  ): Promise<number> {
+  ): Promise<number | null> {
     const rows = await this.get<Array<{ cons?: unknown }>>(
-      `${CONSUMPTION_URL}/${period}/${meterId}/${date}/${date}`,
+      `${CONSUMPTION_URL}/${period}/${meterCount}/${date}/${date}`,
     );
-    // The API returns an empty array before the first reading of the day is
-    // produced, which means zero consumption so far.
+    // Two distinct "no data" shapes: an empty array, or a row whose `cons` is
+    // explicitly null. Both mean the reading has not been produced yet, which
+    // must not be reported as zero consumption.
     if (!Array.isArray(rows) || rows.length === 0) {
-      return 0;
+      return null;
     }
-    return toNumber(rows[0].cons) ?? 0;
+    const cons = rows[0]?.cons;
+    if (cons === null || cons === undefined) {
+      return null;
+    }
+    return toNumber(cons);
   }
 
   private async forecast(meterId: number): Promise<number | null> {
