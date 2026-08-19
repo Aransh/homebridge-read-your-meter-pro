@@ -24,6 +24,25 @@ The word "lux" is wrong and there is nothing to be done about it. The number is
 correct. Service names carry no unit, because HomeKit rejects names that end in
 punctuation or contain symbols like `³`.
 
+### Why a light sensor?
+
+This is a deliberate compromise, not an oversight. HAP defines `Valve`,
+`Faucet`, `IrrigationSystem` and `LeakSensor`, but nothing that carries a volume
+or a meter reading, and Apple provides no mechanism for a custom unit that the
+Home app will render. The alternatives were:
+
+- **Eve custom characteristics.** Spec-correct, but the values appear only in
+  the Eve app and never in Apple Home, and the `E863F131` encoding is
+  reverse-engineered rather than documented.
+- **Show nothing numeric at all.** Leak sensors only. Honest, but users
+  reasonably want to glance at a number.
+- **A light sensor carrying the value.** Works in every HomeKit client, no
+  reverse engineering, at the cost of a wrong unit label.
+
+The third option loses one label and keeps everything else, so that is what this
+plugin does. The leak sensors remain the functional core — they are a real
+sensor type, so notifications and automations behave correctly.
+
 The **leak sensors are the point**. They are a real HomeKit sensor type, so you
 get push notifications and automation triggers for free — "notify me if today's
 usage passes 500 L" is a decent leak detector for a house. The light sensors are
@@ -36,6 +55,8 @@ Prometheus/InfluxDB instead, not HomeKit.
   meter is not an ARAD unit or your water corporation has not migrated to the
   Pro portal — verify you can log in on the web before installing.
 - Homebridge v1.8+ or v2.x, Node.js 20/22/24.
+- No runtime dependencies, so installation is a single request — which matters
+  on a Raspberry Pi, where npm's per-dependency fetching is slow and failure-prone.
 
 ## Installation
 
@@ -111,9 +132,18 @@ below 15 minutes.
 
 ```bash
 npm install
+npm run lint
 npm run build
-npm test        # smoke tests against a mocked portal — no credentials needed
+npm test        # lint + build + smoke tests against a mocked portal
 ```
+
+The smoke tests need no credentials and touch no network: they stub `fetch` with
+a fake portal and drive the plugin through Homebridge's real `PlatformAccessory`
+and HAP-NodeJS `Service`/`Characteristic` classes.
+
+Note that the test harness requires Node 22+, because it imports Homebridge 2 to
+obtain those classes. The plugin itself runs on Node 20, and CI lints and builds
+on 20/22/24 while running the harness on 22/24.
 
 ## Credits
 
