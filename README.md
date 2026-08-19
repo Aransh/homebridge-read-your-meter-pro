@@ -119,9 +119,15 @@ below 15 minutes.
 - **Auth**: the plugin logs in once, caches the bearer token, and re-authenticates
   silently on a 401. If the portal rejects your credentials outright it stops
   polling and logs an error rather than retrying on a timer and risking a lockout.
-- **State**: a generated `deviceId` and the cached token live in
-  `<homebridge storage>/.read-your-meter-pro/state.json` (mode 0600). The
-  `deviceId` is stable across restarts, since the portal registers a device per id.
+- **Credentials**: your email and password live in `config.json`, like every
+  other Homebridge plugin. They are never written anywhere else and never logged.
+- **State**: a generated `deviceId` and the cached session token live in
+  `<homebridge storage>/.read-your-meter-pro.json` (mode 0600), following the
+  same convention as `homebridge-ring`'s `.ring.json`. The `deviceId` must stay
+  stable across restarts, because the portal registers a device per id. Writes
+  are atomic (temp file plus rename) and serialised, so a crash mid-write cannot
+  leave a truncated file that forces a new device registration on next boot.
+  Deleting the file is safe: the plugin mints a new id and logs in again.
 - **Failures**: a failed poll sets `StatusFault` and clears `StatusActive` on
   every service, so an outage is visible rather than silently stale. It clears on
   the next successful poll.

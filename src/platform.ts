@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 
 import type {
   API,
@@ -25,6 +25,8 @@ import {
   type ResolvedConfig,
   type RymProPlatformConfig,
 } from './settings.js';
+
+const STATE_FILE_NAME = '.read-your-meter-pro.json';
 
 interface PersistedState {
   deviceId: string;
@@ -57,7 +59,9 @@ export class RymProPlatform implements DynamicPlatformPlugin {
   ) {
     this.Service = api.hap.Service;
     this.Characteristic = api.hap.Characteristic;
-    this.statePath = join(api.user.storagePath(), '.read-your-meter-pro', 'state.json');
+    // Convention borrowed from homebridge-ring's `.ring.json`: a single
+    // dot-prefixed JSON file at the root of the Homebridge storage path.
+    this.statePath = join(api.user.storagePath(), STATE_FILE_NAME);
 
     this.settings = resolveConfig(config ?? {}, log);
     if (!this.settings) {
@@ -250,7 +254,6 @@ export class RymProPlatform implements DynamicPlatformPlugin {
     this.writeQueue = this.writeQueue.then(async () => {
       const tmp = `${this.statePath}.${process.pid}.tmp`;
       try {
-        await mkdir(dirname(this.statePath), { recursive: true });
         await writeFile(tmp, snapshot, { mode: 0o600 });
         await rename(tmp, this.statePath);
       } catch (error) {

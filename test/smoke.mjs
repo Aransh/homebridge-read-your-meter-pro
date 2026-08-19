@@ -136,7 +136,7 @@ plugin(api);
 // ------------------------------------------------------------------ run tests
 
 const settled = () => new Promise((r) => setTimeout(r, 60));
-const statePath = join(storagePath, '.read-your-meter-pro', 'state.json');
+const statePath = join(storagePath, '.read-your-meter-pro.json');
 let firstDeviceId;
 
 // 1. Refuses to start without credentials.
