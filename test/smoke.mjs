@@ -311,6 +311,50 @@ console.log('✓ accessory information uses the physical meter serial');
   console.log('✓ fault clears on recovery');
 }
 
+// 6b. A failed FIRST poll after a restart must still surface a fault on the
+// cached accessory, and must retry quickly rather than after a full interval.
+{
+  const cached = registered[0];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => {
+    throw new TypeError('fetch failed');
+  };
+  const cold = new api._ctor(
+    log,
+    {
+      platform: 'ReadYourMeterPro',
+      email: 'aran@example.com',
+      password: 'correct-horse',
+      pollInterval: 720,
+      dailyThreshold: 500,
+    },
+    api,
+  );
+  cold.configureAccessory(cached);
+  for (const cb of handlers.didFinishLaunching ?? []) {
+    cb();
+  }
+  await settled();
+  globalThis.fetch = realFetch;
+
+  const svc = cached.services.find((s) => s.displayName === 'Water Today');
+  assert.equal(
+    svc.getCharacteristic(Characteristic.StatusFault).value,
+    Characteristic.StatusFault.GENERAL_FAULT,
+    'cached accessory must show a fault when the first poll fails',
+  );
+  assert.ok(cold.timer, 'a retry must be armed');
+  // 720 minutes was configured; the cold retry must be far shorter.
+  const remaining = cold.timer._idleTimeout;
+  assert.ok(
+    remaining <= 60_000,
+    `cold retry should be <=60s, got ${remaining}ms`,
+  );
+  cold.timer.close?.();
+  clearTimeout(cold.timer);
+  console.log('✓ failed first poll faults cached accessories and retries fast');
+}
+
 // 7. Bad credentials stop the poll loop rather than hammering the portal.
 {
   // Fresh storage dir: no cached token, so the plugin must actually log in.

@@ -129,7 +129,10 @@ below 15 minutes.
   Deleting the file is safe: the plugin mints a new id and logs in again.
 - **Failures**: a failed poll sets `StatusFault` and clears `StatusActive` on
   every service, so an outage is visible rather than silently stale. It clears on
-  the next successful poll.
+  the next successful poll. If the *first* poll after a restart fails, cached
+  accessories are still wired up so they report the fault instead of sitting at
+  default values, and the plugin retries every minute until it has something to
+  show before settling into the configured interval.
 - **Reconfiguration**: setting a threshold to `0`, or turning off the forecast or
   total, removes those services on the next restart instead of leaving ghosts.
 

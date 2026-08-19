@@ -28,6 +28,9 @@ import {
 
 const STATE_FILE_NAME = '.read-your-meter-pro.json';
 
+/** Retry delay used only before the first successful poll. */
+const COLD_RETRY_MS = 60_000;
+
 interface PersistedState {
   deviceId: string;
   token?: string;
@@ -51,6 +54,7 @@ export class RymProPlatform implements DynamicPlatformPlugin {
   private state: PersistedState | null = null;
   /** Serialises writes so a fire-and-forget save can't interleave with another. */
   private writeQueue: Promise<void> = Promise.resolve();
+  private hadSuccessfulPoll = false;
 
   constructor(
     public readonly log: Logging,
@@ -69,7 +73,11 @@ export class RymProPlatform implements DynamicPlatformPlugin {
     }
 
     this.api.on('didFinishLaunching', () => {
-      void this.start();
+      // Verified criteria require the plugin to catch and log its own errors;
+      // an unhandled rejection here would surface as a Homebridge-level crash.
+      this.start().catch((error) => {
+        this.log.error(`Failed to start: ${message(error)}`);
+      });
     });
     this.api.on('shutdown', () => {
       this.stopped = true;
@@ -122,7 +130,9 @@ export class RymProPlatform implements DynamicPlatformPlugin {
       const snapshots = await this.client.fetchAll();
       this.log.debug(`Fetched ${snapshots.length} meter(s)`);
       this.syncAccessories(snapshots);
+      this.hadSuccessfulPoll = true;
     } catch (error) {
+      this.adoptCachedAccessories();
       this.markFaulted();
 
       if (error instanceof UnauthorizedError) {
@@ -147,10 +157,35 @@ export class RymProPlatform implements DynamicPlatformPlugin {
     if (this.stopped || !this.settings) {
       return;
     }
+    // Until the first poll succeeds there is nothing on screen, so a full
+    // interval of blankness after a restart during a portal outage is a poor
+    // experience. Retry quickly until there is something to show, then settle
+    // into the configured interval.
+    const delay = this.hadSuccessfulPoll ? this.settings.pollIntervalMs : COLD_RETRY_MS;
     this.timer = setTimeout(() => {
       void this.poll();
-    }, this.settings.pollIntervalMs);
+    }, delay);
     this.timer.unref?.();
+  }
+
+  /**
+   * Wires up handlers for accessories restored from cache that have not been
+   * matched to a live meter yet. Without this, a failed first poll after a
+   * restart leaves cached accessories visible in the Home app with default
+   * values and no fault indication.
+   */
+  private adoptCachedAccessories(): void {
+    const settings = this.settings;
+    if (!settings) {
+      return;
+    }
+    for (const [uuid, accessory] of this.cachedAccessories) {
+      if (this.meters.has(uuid) || accessory.context.meterCount === undefined) {
+        continue;
+      }
+      this.log.debug(`Adopting cached accessory ${accessory.displayName} to report its fault state`);
+      this.meters.set(uuid, new MeterAccessory(this, accessory, settings));
+    }
   }
 
   private syncAccessories(snapshots: MeterSnapshot[]): void {
