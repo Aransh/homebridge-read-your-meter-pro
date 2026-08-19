@@ -41,6 +41,7 @@
     "lint": "eslint . --max-warnings=0",
     "probe": "node scripts/probe.mjs",
     "test": "npm run lint && npm run build && node test/smoke.mjs",
+    "prepare": "npm run build",
     "prepublishOnly": "npm run test"
   },
   "devDependencies": {
