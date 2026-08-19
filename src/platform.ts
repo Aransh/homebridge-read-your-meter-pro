@@ -309,6 +309,15 @@ export class RymProPlatform implements DynamicPlatformPlugin {
     });
   }
 
+  /**
+   * Writes an accessory's `context` back to Homebridge's accessory cache.
+   * Context only reaches disk when this is called, so a name the user chose in
+   * the Home app would otherwise be forgotten on the next restart.
+   */
+  saveAccessoryContext(accessory: PlatformAccessory): void {
+    this.api.updatePlatformAccessories([accessory]);
+  }
+
   /** Test hook: resolves once every queued write has landed. */
   async flushState(): Promise<void> {
     await this.writeQueue;

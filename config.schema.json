@@ -2,7 +2,7 @@
   "pluginAlias": "ReadYourMeterPro",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Exposes your Read Your Meter Pro water meter in HomeKit. HomeKit has no water-consumption service, so readings are surfaced as **light sensors** (the number is your consumption, the unit says \"lux\" \u2014 ignore it) and thresholds as **leak sensors** you can use for automations and notifications.",
+  "headerDisplay": "Exposes your Read Your Meter Pro water meter in HomeKit. HomeKit has no water-consumption service, so readings are surfaced as **light sensors** (the number is your consumption, the unit says \"lux\" — ignore it) and thresholds as **leak sensors** you can use for automations and notifications.",
   "footerDisplay": "For verbose logs, enable Homebridge debug mode (or the debug toggle on this plugin's child bridge). Unofficial; not affiliated with Arad Group or any water corporation.",
   "schema": {
     "type": "object",
@@ -48,7 +48,7 @@
             ]
           },
           {
-            "title": "Cubic metres (m\u00b3)",
+            "title": "Cubic metres (m³)",
             "enum": [
               "cubic_meters"
             ]
@@ -61,25 +61,66 @@
         "type": "number",
         "default": 0,
         "minimum": 0,
-        "description": "Trips the daily leak sensor when today's consumption reaches this value, in the unit selected above. 0 disables the sensor."
+        "description": "Trips the daily alert when today's consumption reaches this value, in the unit selected above. A rough starting point is 400 litres per person per day — roughly double a normal day, so it flags a genuine problem rather than a long shower. Watch the plugin's debug log for a week and adjust. 0 removes the sensor."
       },
       "monthlyThreshold": {
         "title": "Monthly alert threshold",
         "type": "number",
         "default": 0,
         "minimum": 0,
-        "description": "Trips the monthly leak sensor when this month's consumption reaches this value. 0 disables the sensor."
+        "description": "Trips the monthly alert when this month's consumption reaches this value. 3500 litres per person per month is the subsidised household allocation in Israel, so that is a useful place to put it: the alert then means \"from here on the water costs about double\". 0 removes the sensor."
       },
-      "exposeForecast": {
-        "title": "Expose month-end forecast",
+      "exposeDaily": {
+        "title": "Today's consumption",
         "type": "boolean",
         "default": true
       },
+      "exposeMonthly": {
+        "title": "This month's consumption",
+        "type": "boolean",
+        "default": true
+      },
+      "exposeForecast": {
+        "title": "Month-end forecast",
+        "type": "boolean",
+        "default": true,
+        "description": "The portal's own estimate of what this whole calendar month will add up to. Comparable to the monthly threshold."
+      },
       "exposeTotal": {
-        "title": "Expose cumulative meter reading",
+        "title": "Cumulative meter reading",
         "type": "boolean",
         "default": false,
-        "description": "Always reported in m\u00b3, since a lifetime total in litres exceeds HomeKit's 100000 ceiling."
+        "description": "Always reported in m³, since a lifetime total in litres exceeds HomeKit's 100000 ceiling."
+      },
+      "nameDaily": {
+        "title": "Today's consumption",
+        "type": "string",
+        "placeholder": "Water Usage Today"
+      },
+      "nameMonthly": {
+        "title": "This month's consumption",
+        "type": "string",
+        "placeholder": "Water Usage This Month"
+      },
+      "nameForecast": {
+        "title": "Month-end forecast",
+        "type": "string",
+        "placeholder": "Water Monthly Forecast"
+      },
+      "nameTotal": {
+        "title": "Cumulative meter reading",
+        "type": "string",
+        "placeholder": "Water Meter Total"
+      },
+      "nameDailyAlert": {
+        "title": "Daily alert sensor",
+        "type": "string",
+        "placeholder": "Water Daily Alert"
+      },
+      "nameMonthlyAlert": {
+        "title": "Monthly alert sensor",
+        "type": "string",
+        "placeholder": "Water Monthly Alert"
       }
     }
   },
@@ -98,15 +139,41 @@
     },
     {
       "type": "fieldset",
+      "title": "Sensors",
+      "description": "Switching a sensor off removes it from HomeKit on the next restart. The two alert sensors are controlled by their thresholds above: 0 removes them.",
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        "exposeDaily",
+        "exposeMonthly",
+        "exposeForecast",
+        "exposeTotal"
+      ]
+    },
+    {
+      "type": "fieldset",
+      "title": "Names",
+      "description": "Leave these empty to name the sensors in the Home app instead — renames there are remembered across restarts. Filling one in pins the name, and a rename in the Home app will be undone on the next restart. HomeKit only accepts names that start and end with a letter or digit.",
+      "expandable": true,
+      "expanded": false,
+      "items": [
+        "nameDaily",
+        "nameMonthly",
+        "nameForecast",
+        "nameTotal",
+        "nameDailyAlert",
+        "nameMonthlyAlert"
+      ]
+    },
+    {
+      "type": "fieldset",
       "title": "Advanced",
       "expandable": true,
       "expanded": false,
       "items": [
         "name",
         "unit",
-        "pollInterval",
-        "exposeForecast",
-        "exposeTotal"
+        "pollInterval"
       ]
     }
   ]

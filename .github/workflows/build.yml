@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Lets release.yml gate a publish on exactly these checks.
+  workflow_call:
 
 jobs:
   # Verified criteria (updated 2026-05-05) require support for the currently
