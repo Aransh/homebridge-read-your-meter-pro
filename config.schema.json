@@ -1,0 +1,97 @@
+{
+  "pluginAlias": "ReadYourMeterPro",
+  "pluginType": "platform",
+  "singular": true,
+  "headerDisplay": "Exposes your Read Your Meter Pro water meter in HomeKit. HomeKit has no water-consumption service, so readings are surfaced as **light sensors** (the number is your consumption, the unit says \"lux\" — ignore it) and thresholds as **leak sensors** you can use for automations and notifications.",
+  "footerDisplay": "Unofficial. Not affiliated with Arad Group or any water corporation.",
+  "schema": {
+    "type": "object",
+    "properties": {
+      "name": {
+        "title": "Name",
+        "type": "string",
+        "default": "Read Your Meter Pro",
+        "required": true
+      },
+      "email": {
+        "title": "Email",
+        "type": "string",
+        "format": "email",
+        "required": true,
+        "description": "The email address you use to sign in at rym-pro.com."
+      },
+      "password": {
+        "title": "Password",
+        "type": "string",
+        "required": true,
+        "x-schema-form": { "type": "password" }
+      },
+      "pollInterval": {
+        "title": "Poll interval (minutes)",
+        "type": "integer",
+        "default": 60,
+        "minimum": 15,
+        "maximum": 1440,
+        "description": "The meter itself only reports hourly at best, so there is nothing to gain below 60."
+      },
+      "unit": {
+        "title": "Unit",
+        "type": "string",
+        "default": "liters",
+        "oneOf": [
+          { "title": "Litres", "enum": ["liters"] },
+          { "title": "Cubic metres (m³)", "enum": ["cubic_meters"] }
+        ],
+        "description": "Litres read better in the Home app: 734 instead of 0.734."
+      },
+      "dailyThreshold": {
+        "title": "Daily alert threshold",
+        "type": "number",
+        "default": 0,
+        "minimum": 0,
+        "description": "Trips the daily leak sensor when today's consumption reaches this value, in the unit selected above. 0 disables the sensor."
+      },
+      "monthlyThreshold": {
+        "title": "Monthly alert threshold",
+        "type": "number",
+        "default": 0,
+        "minimum": 0,
+        "description": "Trips the monthly leak sensor when this month's consumption reaches this value. 0 disables the sensor."
+      },
+      "exposeForecast": {
+        "title": "Expose month-end forecast",
+        "type": "boolean",
+        "default": true
+      },
+      "exposeTotal": {
+        "title": "Expose cumulative meter reading",
+        "type": "boolean",
+        "default": false,
+        "description": "Always reported in m³, since a lifetime total in litres exceeds HomeKit's 100000 ceiling."
+      },
+      "debug": {
+        "title": "Verbose logging",
+        "type": "boolean",
+        "default": false
+      }
+    }
+  },
+  "layout": [
+    "email",
+    "password",
+    {
+      "type": "fieldset",
+      "title": "Alerts",
+      "expandable": true,
+      "expanded": true,
+      "items": ["dailyThreshold", "monthlyThreshold"]
+    },
+    {
+      "type": "fieldset",
+      "title": "Advanced",
+      "expandable": true,
+      "expanded": false,
+      "items": ["name", "unit", "pollInterval", "exposeForecast", "exposeTotal", "debug"]
+    }
+  ]
+}
