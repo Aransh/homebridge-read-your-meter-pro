@@ -145,6 +145,19 @@ Note that the test harness requires Node 22+, because it imports Homebridge 2 to
 obtain those classes. The plugin itself runs on Node 20, and CI lints and builds
 on 20/22/24 while running the harness on 22/24.
 
+## Verifying the API against your account
+
+If a field looks wrong, or the portal changes shape, dump the raw responses:
+
+```bash
+RYM_EMAIL=you@example.com RYM_PW='your-password' npm run probe
+```
+
+This prints a **redacted** summary of every endpoint the plugin uses — safe to
+paste into an issue — and writes the full unredacted response to
+`probe-output.json` (mode 0600, gitignored) for your own inspection. Delete that
+file when you are done.
+
 ## Credits
 
 Endpoint knowledge derived from [pyrympro](https://github.com/OnFreund/pyrympro)

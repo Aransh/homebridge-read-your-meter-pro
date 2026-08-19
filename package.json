@@ -38,6 +38,7 @@
     "build": "rimraf dist && tsc",
     "watch": "tsc --watch",
     "lint": "eslint .",
+    "probe": "node scripts/probe.mjs",
     "test": "npm run lint && npm run build && node test/smoke.mjs",
     "prepublishOnly": "npm run test"
   },

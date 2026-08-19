@@ -26,7 +26,7 @@ export default tseslint.config(
   {
     // The smoke test drives the plugin the way Homebridge does, so it needs
     // console output and a loosely-typed API shim.
-    files: ['test/**/*.mjs'],
+    files: ['test/**/*.mjs', 'scripts/**/*.mjs'],
     languageOptions: {
       globals: {
         console: 'readonly',
@@ -35,6 +35,7 @@ export default tseslint.config(
         URL: 'readonly',
         Response: 'readonly',
         setTimeout: 'readonly',
+        fetch: 'readonly',
       },
     },
   },
