@@ -8,11 +8,12 @@
   "type": "module",
   "main": "dist/index.js",
   "engines": {
-    "node": "^20.19.0 || ^22.12.0 || ^24.0.0",
+    "node": "^22.10.0 || ^24.0.0",
     "homebridge": "^1.8.0 || ^2.0.0"
   },
   "keywords": [
     "homebridge-plugin",
+    "supports-hap",
     "water",
     "water-meter",
     "rympro",
@@ -37,7 +38,7 @@
   "scripts": {
     "build": "rimraf dist && tsc",
     "watch": "tsc --watch",
-    "lint": "eslint .",
+    "lint": "eslint . --max-warnings=0",
     "probe": "node scripts/probe.mjs",
     "test": "npm run lint && npm run build && node test/smoke.mjs",
     "prepublishOnly": "npm run test"

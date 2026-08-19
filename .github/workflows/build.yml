@@ -7,27 +7,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  # The plugin itself supports Node 20 (Homebridge 1.8+ runs there), so the
-  # published code has to compile and lint cleanly on it.
-  lint-and-build:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: [20.x, 22.x, 24.x]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ matrix.node-version }}
-          cache: npm
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run build
-
-  # The smoke test loads Homebridge 2 to get the real PlatformAccessory and HAP
-  # classes, and Homebridge 2 requires Node >= 22 — so the harness cannot run on
-  # Node 20 even though the plugin can.
+  # Verified criteria (updated 2026-05-05) require support for the currently
+  # supported LTS releases of Node.js, which are v22 and v24.
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -41,7 +22,7 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci
-      - run: npm test
+      - run: npm test # lint + build + smoke tests
 
   # Catches the case where `files` in package.json drifts and the published
   # tarball is missing dist/ or config.schema.json.
@@ -55,7 +36,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      - run: npm pack --dry-run
       - name: Assert required files are packed
         run: |
           npm pack --json > /tmp/pack.json

@@ -82,7 +82,7 @@ export class RymProPlatform implements DynamicPlatformPlugin {
 
   /** Called by Homebridge for each accessory restored from disk cache. */
   configureAccessory(accessory: PlatformAccessory): void {
-    this.debug(`Restoring cached accessory: ${accessory.displayName}`);
+    this.log.debug(`Restoring cached accessory: ${accessory.displayName}`);
     this.cachedAccessories.set(accessory.UUID, accessory);
   }
 
@@ -120,7 +120,7 @@ export class RymProPlatform implements DynamicPlatformPlugin {
 
     try {
       const snapshots = await this.client.fetchAll();
-      this.debug(`Fetched ${snapshots.length} meter(s)`);
+      this.log.debug(`Fetched ${snapshots.length} meter(s)`);
       this.syncAccessories(snapshots);
     } catch (error) {
       this.markFaulted();
@@ -167,18 +167,29 @@ export class RymProPlatform implements DynamicPlatformPlugin {
 
       let meter = this.meters.get(uuid);
       if (!meter) {
-        let accessory = this.cachedAccessories.get(uuid);
-        if (accessory) {
+        const cached = this.cachedAccessories.get(uuid);
+        let accessory: PlatformAccessory;
+        if (cached) {
           this.log.info(`Reconnecting meter ${snapshot.meterCount}`);
+          accessory = cached;
+          // Context lives in Homebridge's on-disk accessory cache, so a change
+          // only survives a restart if updatePlatformAccessories is called.
+          if (accessory.context.meterCount !== snapshot.meterCount) {
+            accessory.context.meterCount = snapshot.meterCount;
+            this.api.updatePlatformAccessories([accessory]);
+          }
         } else {
           this.log.info(`Adding meter ${snapshot.meterCount}`);
           accessory = new this.api.platformAccessory(
             `Water Meter ${snapshot.meterCount}`,
             uuid,
           );
+          // Context must be populated before registering, otherwise the first
+          // write to the accessory cache omits it and a restart restores an
+          // accessory with no meterCount.
+          accessory.context.meterCount = snapshot.meterCount;
           this.api.registerPlatformAccessories(PLUGIN_NAME, PLATFORM_NAME, [accessory]);
         }
-        accessory.context.meterCount = snapshot.meterCount;
         meter = new MeterAccessory(this, accessory, settings);
         this.meters.set(uuid, meter);
       }
@@ -268,13 +279,6 @@ export class RymProPlatform implements DynamicPlatformPlugin {
     await this.writeQueue;
   }
 
-  debug(msg: string): void {
-    if (this.settings?.debug) {
-      this.log.info(`[debug] ${msg}`);
-    } else {
-      this.log.debug(msg);
-    }
-  }
 }
 
 function message(error: unknown): string {

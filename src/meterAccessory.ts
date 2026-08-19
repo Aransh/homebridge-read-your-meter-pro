@@ -159,7 +159,7 @@ export class MeterAccessory {
 
     const unitLabel = this.unit === 'liters' ? 'L' : 'm³';
     const show = (v: number | null) => (v === null ? 'no reading yet' : `${round(v)}${unitLabel}`);
-    this.platform.debug(
+    this.platform.log.debug(
       `Meter ${snapshot.meterCount}: today=${show(daily)} month=${show(monthly)} ` +
         `forecast=${show(scale(snapshot.forecast))} total=${round(snapshot.total)}m³`,
     );

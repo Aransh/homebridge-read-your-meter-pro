@@ -2,8 +2,8 @@
   "pluginAlias": "ReadYourMeterPro",
   "pluginType": "platform",
   "singular": true,
-  "headerDisplay": "Exposes your Read Your Meter Pro water meter in HomeKit. HomeKit has no water-consumption service, so readings are surfaced as **light sensors** (the number is your consumption, the unit says \"lux\" — ignore it) and thresholds as **leak sensors** you can use for automations and notifications.",
-  "footerDisplay": "Unofficial. Not affiliated with Arad Group or any water corporation.",
+  "headerDisplay": "Exposes your Read Your Meter Pro water meter in HomeKit. HomeKit has no water-consumption service, so readings are surfaced as **light sensors** (the number is your consumption, the unit says \"lux\" \u2014 ignore it) and thresholds as **leak sensors** you can use for automations and notifications.",
+  "footerDisplay": "For verbose logs, enable Homebridge debug mode (or the debug toggle on this plugin's child bridge). Unofficial; not affiliated with Arad Group or any water corporation.",
   "schema": {
     "type": "object",
     "properties": {
@@ -24,7 +24,9 @@
         "title": "Password",
         "type": "string",
         "required": true,
-        "x-schema-form": { "type": "password" }
+        "x-schema-form": {
+          "type": "password"
+        }
       },
       "pollInterval": {
         "title": "Poll interval (minutes)",
@@ -39,8 +41,18 @@
         "type": "string",
         "default": "liters",
         "oneOf": [
-          { "title": "Litres", "enum": ["liters"] },
-          { "title": "Cubic metres (m³)", "enum": ["cubic_meters"] }
+          {
+            "title": "Litres",
+            "enum": [
+              "liters"
+            ]
+          },
+          {
+            "title": "Cubic metres (m\u00b3)",
+            "enum": [
+              "cubic_meters"
+            ]
+          }
         ],
         "description": "Litres read better in the Home app: 734 instead of 0.734."
       },
@@ -67,12 +79,7 @@
         "title": "Expose cumulative meter reading",
         "type": "boolean",
         "default": false,
-        "description": "Always reported in m³, since a lifetime total in litres exceeds HomeKit's 100000 ceiling."
-      },
-      "debug": {
-        "title": "Verbose logging",
-        "type": "boolean",
-        "default": false
+        "description": "Always reported in m\u00b3, since a lifetime total in litres exceeds HomeKit's 100000 ceiling."
       }
     }
   },
@@ -84,14 +91,23 @@
       "title": "Alerts",
       "expandable": true,
       "expanded": true,
-      "items": ["dailyThreshold", "monthlyThreshold"]
+      "items": [
+        "dailyThreshold",
+        "monthlyThreshold"
+      ]
     },
     {
       "type": "fieldset",
       "title": "Advanced",
       "expandable": true,
       "expanded": false,
-      "items": ["name", "unit", "pollInterval", "exposeForecast", "exposeTotal", "debug"]
+      "items": [
+        "name",
+        "unit",
+        "pollInterval",
+        "exposeForecast",
+        "exposeTotal"
+      ]
     }
   ]
 }

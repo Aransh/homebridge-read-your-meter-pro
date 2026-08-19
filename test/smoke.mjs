@@ -111,6 +111,8 @@ const log = Object.assign((...a) => logs.push(['info', a.join(' ')]), {
 const storagePath = mkdtempSync(join(tmpdir(), 'hb-rympro-'));
 let activeStoragePath = storagePath;
 const registered = [];
+const updated = [];
+const registeredWithContext = [];
 const unregistered = [];
 const handlers = {};
 
@@ -126,9 +128,13 @@ const api = {
   registerPlatform(_pluginName, _platformName, ctor) {
     api._ctor = ctor;
   },
-  registerPlatformAccessories: (_p, _pl, accs) => registered.push(...accs),
+  registerPlatformAccessories: (_p, _pl, accs) => {
+    // Snapshot context at registration time: that is what gets cached to disk.
+    registeredWithContext.push(...accs.map(a => a.context.meterCount !== undefined));
+    registered.push(...accs);
+  },
   unregisterPlatformAccessories: (_p, _pl, accs) => unregistered.push(...accs),
-  updatePlatformAccessories: () => {},
+  updatePlatformAccessories: (accs) => updated.push(...accs),
 };
 
 plugin(api);
@@ -163,7 +169,6 @@ const platform = new api._ctor(
     exposeForecast: true,
     exposeTotal: true,
     pollInterval: 60,
-    debug: true,
   },
   api,
 );
@@ -176,7 +181,13 @@ await settled();
 assert.equal(registered.length, 1, 'one accessory registered');
 const accessory = registered[0];
 assert.equal(accessory.context.meterCount, METER_ID);
-console.log(`✓ registered accessory "${accessory.displayName}"`);
+// Homebridge writes the accessory cache when registerPlatformAccessories is
+// called, so context set afterwards would never reach disk.
+assert.ok(
+  registeredWithContext[0],
+  'context.meterCount must be populated before registerPlatformAccessories',
+);
+console.log(`✓ registered accessory "${accessory.displayName}" with context already set`);
 
 const byName = (name) =>
   accessory.services.find((s) => s.displayName === name) ??

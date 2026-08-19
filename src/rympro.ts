@@ -229,5 +229,3 @@ function describe(error: unknown): string {
   }
   return String(error);
 }
-
-export const __testing__ = { localDate };

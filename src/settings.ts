@@ -29,7 +29,6 @@ export interface RymProPlatformConfig extends PlatformConfig {
   exposeForecast?: boolean;
   /** Total meter reading, always reported in m³ regardless of `unit`. */
   exposeTotal?: boolean;
-  debug?: boolean;
 }
 
 export interface ResolvedConfig {
@@ -41,7 +40,6 @@ export interface ResolvedConfig {
   monthlyThreshold: number;
   exposeForecast: boolean;
   exposeTotal: boolean;
-  debug: boolean;
 }
 
 export const MIN_POLL_MINUTES = 15;
@@ -84,7 +82,6 @@ export function resolveConfig(
     monthlyThreshold: nonNegative(config.monthlyThreshold),
     exposeForecast: config.exposeForecast !== false,
     exposeTotal: config.exposeTotal === true,
-    debug: config.debug === true,
   };
 }
 

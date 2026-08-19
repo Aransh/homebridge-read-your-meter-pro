@@ -54,7 +54,7 @@ Prometheus/InfluxDB instead, not HomeKit.
 - An account at [rym-pro.com](https://rym-pro.com). Registration fails if your
   meter is not an ARAD unit or your water corporation has not migrated to the
   Pro portal — verify you can log in on the web before installing.
-- Homebridge v1.8+ or v2.x, Node.js 20/22/24.
+- Homebridge v1.8+ or v2.x, Node.js 22 or 24.
 - No runtime dependencies, so installation is a single request — which matters
   on a Raspberry Pi, where npm's per-dependency fetching is slow and failure-prone.
 
@@ -99,7 +99,6 @@ Use the Homebridge UI settings form, or add to `config.json`:
 | `monthlyThreshold` | `0` | In `unit`. `0` removes the sensor. |
 | `exposeForecast` | `true` | Month-end estimate. |
 | `exposeTotal` | `false` | Cumulative reading. Always m³. |
-| `debug` | `false` | Verbose logging. |
 
 ### Why litres by default
 
@@ -145,11 +144,7 @@ npm test        # lint + build + smoke tests against a mocked portal
 
 The smoke tests need no credentials and touch no network: they stub `fetch` with
 a fake portal and drive the plugin through Homebridge's real `PlatformAccessory`
-and HAP-NodeJS `Service`/`Characteristic` classes.
-
-Note that the test harness requires Node 22+, because it imports Homebridge 2 to
-obtain those classes. The plugin itself runs on Node 20, and CI lints and builds
-on 20/22/24 while running the harness on 22/24.
+and HAP-NodeJS `Service`/`Characteristic` classes. CI runs them on Node 22 and 24.
 
 ## Verifying the API against your account
 
@@ -158,6 +153,10 @@ If a field looks wrong, or the portal changes shape, dump the raw responses:
 ```bash
 RYM_EMAIL=you@example.com RYM_PW='your-password' npm run probe
 ```
+
+For verbose runtime logs, enable Homebridge's own debug mode (`homebridge -D`,
+or the debug toggle on this plugin's child bridge in the Homebridge UI). The
+plugin deliberately has no `debug` option of its own.
 
 This prints a **redacted** summary of every endpoint the plugin uses — safe to
 paste into an issue — and writes the full unredacted response to
