@@ -219,25 +219,39 @@ and HAP-NodeJS `Service`/`Characteristic` classes. CI runs them on Node 22 and 2
 
 Releasing is a manual, deliberate act:
 
-1. Bump the version: `npm version 1.0.0 --no-git-tag-version`. Commit and merge it.
-2. Actions → **release** → *Run workflow*. Give it the tag (`v1.0.0`), tick
+1. Bump the version: `npm version 1.0.0 --no-git-tag-version`.
+2. Move the [`Unreleased`](CHANGELOG.md) notes into a `## [1.0.0] - YYYY-MM-DD`
+   section, and add the compare link at the bottom of the file. Commit and merge
+   both.
+3. Actions → **release** → *Run workflow*. Give it the tag (`v1.0.0`), tick
    **prerelease** for anything like `v1.0.0-beta.2`, and run it.
 
 The workflow re-runs the whole build on both Node versions, publishes to npm with
-provenance, then creates the tag and a GitHub release with generated notes. Tick
-**dry run** to build and pack without publishing anything.
+provenance, then creates the tag and a GitHub release whose notes are that
+version's `CHANGELOG.md` section verbatim — the changelog is the source of truth,
+not a generated commit list. Tick **dry run** to build and pack without
+publishing anything.
 
 It refuses to do the wrong thing rather than doing it quietly: the tag has to
 match the version in `package.json` (npm publishes what `package.json` says, not
-what you typed), the tag must not already exist, and a prerelease version with
+what you typed), `CHANGELOG.md` must have a non-empty section for that version,
+the tag must not already exist, and a prerelease version with
 the prerelease box unticked is rejected instead of being published as npm
 `latest`. Prereleases publish under their own dist-tag — `1.0.0-beta.1` goes out
 as `beta`, so `npm install -g` keeps giving people the stable line. Override with
 the `npm_tag` input if you need something else.
 
-The only setup required is an `NPM_TOKEN` repository secret — an npm **automation**
-or **granular access** token, since a classic token with 2FA enabled is rejected
-in CI.
+There is no npm token anywhere in the workflow: publishing uses npm's trusted
+publishing, which swaps the job's short-lived GitHub OIDC identity for publish
+rights and produces the provenance attestation as a side effect. The only setup
+required is registering this repository and workflow as a trusted publisher on
+the npm package.
+
+To preview the notes a release would get:
+
+```bash
+node scripts/changelog.mjs v1.0.0-beta.2
+```
 
 ## Verifying the API against your account
 

@@ -41,6 +41,6 @@ jobs:
       - name: Assert required files are packed
         run: |
           npm pack --json > /tmp/pack.json
-          for f in dist/index.js config.schema.json LICENSE README.md; do
+          for f in dist/index.js config.schema.json LICENSE README.md CHANGELOG.md; do
             grep -q "\"$f\"" /tmp/pack.json || { echo "missing from tarball: $f"; exit 1; }
           done

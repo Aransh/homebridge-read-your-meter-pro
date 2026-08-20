@@ -33,7 +33,8 @@
     "config.schema.json",
     "LICENSE",
     "THIRD-PARTY-NOTICES.md",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "rimraf dist && tsc",
