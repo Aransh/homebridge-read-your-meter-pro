@@ -11,6 +11,29 @@ headings in the `## [x.y.z] - YYYY-MM-DD` form.
 
 ## [Unreleased]
 
+## [1.0.0-beta.3] - 2026-08-20
+
+### Added
+
+- Rate-limit handling. An `HTTP 429` from the portal is now retried inside the
+  same poll — three retries backing off roughly 2s, 8s and 30s with jitter,
+  honouring a `Retry-After` header when the portal sends one (and giving up
+  rather than stalling when it asks for more than a minute). Previously a single
+  429 cost a whole poll interval of stale readings. Retries are logged at debug
+  level.
+
+### Changed
+
+- A poll now issues its requests one at a time, spaced apart, instead of firing
+  the daily, monthly and forecast requests in parallel. The burst was the likely
+  trigger for the 429s in the first place, and a poll has an hour to finish.
+- A single failed poll no longer faults the sensors. The last known readings are
+  held and the failure is logged with a count; `StatusFault` is raised once three
+  consecutive polls have failed. A failed *first* poll after a restart still
+  faults immediately, since there is nothing to hold.
+- Shutdown now cancels an in-flight request or a pending retry backoff instead of
+  letting it run to completion.
+
 ## [1.0.0-beta.2] - 2026-08-19
 
 ### Added
@@ -84,6 +107,7 @@ First public prerelease.
   check that fails if the published tarball loses `dist/` or
   `config.schema.json`.
 
-[Unreleased]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.2...HEAD
+[Unreleased]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.3...HEAD
+[1.0.0-beta.3]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.2...v1.0.0-beta.3
 [1.0.0-beta.2]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.1...v1.0.0-beta.2
 [1.0.0-beta.1]: https://github.com/Aransh/homebridge-read-your-meter-pro/releases/tag/v1.0.0-beta.1

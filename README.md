@@ -193,12 +193,24 @@ below 15 minutes.
   are atomic (temp file plus rename) and serialised, so a crash mid-write cannot
   leave a truncated file that forces a new device registration on next boot.
   Deleting the file is safe: the plugin mints a new id and logs in again.
-- **Failures**: a failed poll sets `StatusFault` and clears `StatusActive` on
-  every service, so an outage is visible rather than silently stale. It clears on
-  the next successful poll. If the *first* poll after a restart fails, cached
-  accessories are still wired up so they report the fault instead of sitting at
-  default values, and the plugin retries every minute until it has something to
-  show before settling into the configured interval.
+- **Rate limiting**: the portal answers bursts with `HTTP 429`. A poll therefore
+  issues its requests one at a time, spaced a little apart, rather than firing
+  them in parallel, and a request that is throttled anyway is retried within the
+  same poll — three retries, backing off roughly 2s, 8s then 30s with jitter. A
+  `Retry-After` header wins over that ladder when the portal sends one, unless it
+  asks for longer than a minute, in which case the poll gives up and the next one
+  tries again. Retries are logged at debug level; you only see a warning if every
+  retry was throttled too.
+- **Failures**: three consecutive failed polls set `StatusFault` and clear
+  `StatusActive` on every service, so a real outage is visible rather than
+  silently stale. A single failure is logged but leaves the readings alone: the
+  data is hourly at best, so replacing an hour-old reading with a fault badge
+  over one bad request is a worse trade than showing it for another interval.
+  Faults clear on the next successful poll. If the *first* poll after a restart
+  fails there is nothing worth holding, so cached accessories are wired up and
+  faulted immediately instead of sitting at default values, and the plugin
+  retries every minute until it has something to show before settling into the
+  configured interval.
 - **Reconfiguration**: switching a sensor off, or setting a threshold back to
   `0`, removes that service on the next restart instead of leaving a ghost.
 

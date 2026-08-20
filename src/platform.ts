@@ -31,6 +31,13 @@ const STATE_FILE_NAME = '.read-your-meter-pro.json';
 /** Retry delay used only before the first successful poll. */
 const COLD_RETRY_MS = 60_000;
 
+/**
+ * Consecutive failed polls tolerated before the sensors report a fault. A single
+ * failure is almost always a blip, and faulting on it trades good readings for a
+ * fault badge in the Home app for a whole interval.
+ */
+const FAULT_AFTER_FAILURES = 3;
+
 interface PersistedState {
   deviceId: string;
   token?: string;
@@ -55,6 +62,9 @@ export class RymProPlatform implements DynamicPlatformPlugin {
   /** Serialises writes so a fire-and-forget save can't interleave with another. */
   private writeQueue: Promise<void> = Promise.resolve();
   private hadSuccessfulPoll = false;
+  private consecutiveFailures = 0;
+  /** Cancels in-flight requests and pending backoff at shutdown. */
+  private readonly shutdown = new AbortController();
 
   constructor(
     public readonly log: Logging,
@@ -81,6 +91,9 @@ export class RymProPlatform implements DynamicPlatformPlugin {
     });
     this.api.on('shutdown', () => {
       this.stopped = true;
+      // A poll that is mid-request, or sitting on a rate-limit backoff, must not
+      // outlive the bridge.
+      this.shutdown.abort();
       if (this.timer) {
         clearTimeout(this.timer);
         this.timer = null;
@@ -108,12 +121,11 @@ export class RymProPlatform implements DynamicPlatformPlugin {
       return;
     }
 
-    this.client = new RymProClient(
-      settings.email,
-      settings.password,
-      state.deviceId,
-      (token) => this.persist({ token }),
-    );
+    this.client = new RymProClient(settings.email, settings.password, state.deviceId, {
+      onToken: (token) => this.persist({ token }),
+      onRetry: (msg) => this.log.debug(msg),
+      signal: this.shutdown.signal,
+    });
     if (state.token) {
       this.client.setToken(state.token);
     }
@@ -131,13 +143,19 @@ export class RymProPlatform implements DynamicPlatformPlugin {
       this.log.debug(`Fetched ${snapshots.length} meter(s)`);
       this.syncAccessories(snapshots);
       this.hadSuccessfulPoll = true;
+      this.consecutiveFailures = 0;
     } catch (error) {
+      if (this.stopped) {
+        // Homebridge is going down and aborted the request. Expected, not a fault.
+        return;
+      }
       this.adoptCachedAccessories();
-      this.markFaulted();
+      this.consecutiveFailures += 1;
 
       if (error instanceof UnauthorizedError) {
         // Credentials themselves are rejected. Retrying on a timer just locks
         // the account out, so stop and tell the user to fix the config.
+        this.markFaulted();
         this.log.error(
           `Authentication rejected by Read Your Meter Pro (${message(error)}). ` +
             'Polling stopped — check your email and password, then restart Homebridge.',
@@ -146,8 +164,23 @@ export class RymProPlatform implements DynamicPlatformPlugin {
         return;
       }
 
+      // Hold the last known readings through a short outage rather than
+      // replacing them with a fault, and only fault once the failures look
+      // persistent. Before the first successful poll there is nothing worth
+      // holding, so that faults straight away.
+      const persistent =
+        !this.hadSuccessfulPoll || this.consecutiveFailures >= FAULT_AFTER_FAILURES;
+      if (persistent) {
+        this.markFaulted();
+      }
+
       const kind = error instanceof CannotConnectError ? 'Could not reach' : 'Error talking to';
-      this.log.warn(`${kind} Read Your Meter Pro: ${message(error)}. Will retry on the next poll.`);
+      const held = persistent
+        ? ''
+        : ` Holding the last known readings (failure ${this.consecutiveFailures} of ${FAULT_AFTER_FAILURES}).`;
+      this.log.warn(
+        `${kind} Read Your Meter Pro: ${message(error)}. Will retry on the next poll.${held}`,
+      );
     }
 
     this.scheduleNext();
