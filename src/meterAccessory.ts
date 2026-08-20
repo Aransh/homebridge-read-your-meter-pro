@@ -238,7 +238,8 @@ export class MeterAccessory {
     // date that is indistinguishable from a stuck reading.
     const dailyFor = snapshot.dailyDate === null ? '' : ` (for ${snapshot.dailyDate})`;
     // Likewise for the week: "3 of 5 days" is what distinguishes a genuinely low
-    // week from one the portal has not finished publishing.
+    // week from one the portal has not finished publishing, and the start date
+    // says which window — calendar week or rolling seven days — is in force.
     const weekOf = ` (${snapshot.weeklyDaysCounted} of ${snapshot.weeklyDaysElapsed} days ` +
       `from ${snapshot.weekStart})`;
     this.platform.log.debug(

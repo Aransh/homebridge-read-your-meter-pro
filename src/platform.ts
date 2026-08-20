@@ -133,7 +133,7 @@ export class RymProPlatform implements DynamicPlatformPlugin {
     }
 
     this.client = new RymProClient(settings.email, settings.password, state.deviceId, {
-      weekStartsOn: settings.weekStart === 'monday' ? 1 : 0,
+      weeklyWindow: settings.weeklyWindow,
       onToken: (token) => this.persist({ token }),
       onRetry: (msg) => this.log.debug(msg),
       signal: this.shutdown.signal,

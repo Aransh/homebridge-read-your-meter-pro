@@ -56,25 +56,32 @@
         ],
         "description": "Litres read better in the Home app: 734 instead of 0.734."
       },
-      "weekStart": {
-        "title": "Week starts on",
+      "weeklyWindow": {
+        "title": "Weekly total covers",
         "type": "string",
         "default": "sunday",
+        "required": true,
         "oneOf": [
           {
-            "title": "Sunday",
+            "title": "This calendar week, from Sunday",
             "enum": [
               "sunday"
             ]
           },
           {
-            "title": "Monday",
+            "title": "This calendar week, from Monday",
             "enum": [
               "monday"
             ]
+          },
+          {
+            "title": "The last 7 days (rolling)",
+            "enum": [
+              "rolling"
+            ]
           }
         ],
-        "description": "Which day the weekly total resets on. Only affects the weekly sensor and its alert."
+        "description": "Only affects the weekly sensor and its alert. A calendar week resets on its start day, so early in the week the total is small — and since the portal publishes a day late, it can show nothing at all for a day or two after the reset, where it holds last week's figure instead. The rolling option never resets: it is always the seven days ending today, which makes it steadier to compare and to set an alert on, but it is not \"this week\" and it will not go back down after a heavy week until those days age out."
       },
       "dailyThreshold": {
         "title": "Daily alert threshold",
@@ -88,7 +95,7 @@
         "type": "number",
         "default": 0,
         "minimum": 0,
-        "description": "Trips the weekly alert when the current week's consumption so far reaches this value. The week runs from the start day set under Advanced, and the total is missing whichever recent days the portal has not published yet, so treat it as a floor. 0 removes the sensor."
+        "description": "Trips the weekly alert when the weekly consumption reaches this value. Which week that is — this calendar week, or the last 7 days — is set by \"Weekly total covers\" under Advanced, and the total is missing whichever recent days the portal has not published yet, so treat it as a floor. 0 removes the sensor."
       },
       "monthlyThreshold": {
         "title": "Monthly alert threshold",
@@ -105,7 +112,7 @@
       },
       "exposeWeekly": {
         "title": "This week's consumption",
-        "description": "Consumption so far in the current week, which resets on the week start day. Summed from the daily figures already fetched, so it costs no extra requests.",
+        "description": "Either the current calendar week so far or the last 7 days, per \"Weekly total covers\" under Advanced. Summed from the daily figures already fetched, so it costs no extra requests.",
         "type": "boolean",
         "default": false
       },
@@ -221,7 +228,7 @@
       "items": [
         "name",
         "unit",
-        "weekStart",
+        "weeklyWindow",
         "pollInterval"
       ]
     }
