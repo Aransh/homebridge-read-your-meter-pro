@@ -48,7 +48,7 @@ jobs:
       tag: ${{ steps.resolve.outputs.tag }}
       npm-tag: ${{ steps.resolve.outputs.npm_tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Tags are the record of what has already been released.
           fetch-depth: 0
@@ -135,7 +135,7 @@ jobs:
       # provenance attestation as a side effect.
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
