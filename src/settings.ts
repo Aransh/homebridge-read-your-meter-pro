@@ -15,21 +15,28 @@ export const LUX_MAX = 100000;
 
 export type VolumeUnit = 'liters' | 'cubic_meters';
 
+/** Day the weekly total resets on. Sunday in Israel, where these meters are. */
+export type WeekStart = 'sunday' | 'monday';
+
 /** One sensor. Doubles as the HAP service subtype, so these strings are stable. */
 export type SensorKey =
   | 'daily'
+  | 'weekly'
   | 'monthly'
   | 'forecast'
   | 'total'
   | 'daily-alert'
+  | 'weekly-alert'
   | 'monthly-alert';
 
 export const SENSOR_KEYS: readonly SensorKey[] = [
   'daily',
+  'weekly',
   'monthly',
   'forecast',
   'total',
   'daily-alert',
+  'weekly-alert',
   'monthly-alert',
 ];
 
@@ -41,11 +48,13 @@ export const SENSOR_KEYS: readonly SensorKey[] = [
  * symbols like the superscript in "m³", so no units appear here.
  */
 export const DEFAULT_NAMES: Record<SensorKey, string> = {
-  daily: 'Water Usage Today',
+  daily: 'Water Usage Daily',
+  weekly: 'Water Usage This Week',
   monthly: 'Water Usage This Month',
   forecast: 'Water Monthly Forecast',
   total: 'Water Meter Total',
   'daily-alert': 'Water Daily Alert',
+  'weekly-alert': 'Water Weekly Alert',
   'monthly-alert': 'Water Monthly Alert',
 };
 
@@ -54,22 +63,29 @@ export interface RymProPlatformConfig extends PlatformConfig {
   password?: string;
   /** Minutes between polls. The upstream meter only refreshes hourly at best. */
   pollInterval?: number;
-  /** Unit used for the daily / monthly / forecast light sensors. */
+  /** Unit used for every consumption light sensor. */
   unit?: VolumeUnit;
   /** Threshold in `unit` above which the daily leak sensor trips. 0 disables it. */
   dailyThreshold?: number;
+  /** Threshold in `unit` above which the weekly leak sensor trips. 0 disables it. */
+  weeklyThreshold?: number;
   /** Threshold in `unit` above which the monthly leak sensor trips. 0 disables it. */
   monthlyThreshold?: number;
+  /** Day the weekly total resets on. Defaults to Sunday. */
+  weekStart?: WeekStart;
   exposeDaily?: boolean;
+  exposeWeekly?: boolean;
   exposeMonthly?: boolean;
   exposeForecast?: boolean;
   /** Total meter reading, always reported in m³ regardless of `unit`. */
   exposeTotal?: boolean;
   nameDaily?: string;
+  nameWeekly?: string;
   nameMonthly?: string;
   nameForecast?: string;
   nameTotal?: string;
   nameDailyAlert?: string;
+  nameWeeklyAlert?: string;
   nameMonthlyAlert?: string;
 }
 
@@ -79,7 +95,9 @@ export interface ResolvedConfig {
   pollIntervalMs: number;
   unit: VolumeUnit;
   dailyThreshold: number;
+  weeklyThreshold: number;
   monthlyThreshold: number;
+  weekStart: WeekStart;
   /** Which sensors to expose. Absent keys are removed from the accessory. */
   expose: Record<SensorKey, boolean>;
   /**
@@ -122,10 +140,15 @@ export function resolveConfig(
 
   const unit: VolumeUnit = config.unit === 'cubic_meters' ? 'cubic_meters' : 'liters';
   const dailyThreshold = nonNegative(config.dailyThreshold);
+  const weeklyThreshold = nonNegative(config.weeklyThreshold);
   const monthlyThreshold = nonNegative(config.monthlyThreshold);
+  const weekStart: WeekStart = config.weekStart === 'monday' ? 'monday' : 'sunday';
 
   const expose: Record<SensorKey, boolean> = {
     daily: config.exposeDaily !== false,
+    // Off unless asked for: it is derived from the same window as the daily
+    // figure, so it adds a tile rather than any new information.
+    weekly: config.exposeWeekly === true,
     monthly: config.exposeMonthly !== false,
     forecast: config.exposeForecast !== false,
     total: config.exposeTotal === true,
@@ -133,6 +156,7 @@ export function resolveConfig(
     // compare against, the sensor would report a leak on every poll, since any
     // reading is >= 0.
     'daily-alert': dailyThreshold > 0,
+    'weekly-alert': weeklyThreshold > 0,
     'monthly-alert': monthlyThreshold > 0,
   };
 
@@ -148,14 +172,18 @@ export function resolveConfig(
     pollIntervalMs: pollMinutes * 60_000,
     unit,
     dailyThreshold,
+    weeklyThreshold,
     monthlyThreshold,
+    weekStart,
     expose,
     nameOverrides: {
       daily: validName(config.nameDaily, 'nameDaily', log),
+      weekly: validName(config.nameWeekly, 'nameWeekly', log),
       monthly: validName(config.nameMonthly, 'nameMonthly', log),
       forecast: validName(config.nameForecast, 'nameForecast', log),
       total: validName(config.nameTotal, 'nameTotal', log),
       'daily-alert': validName(config.nameDailyAlert, 'nameDailyAlert', log),
+      'weekly-alert': validName(config.nameWeeklyAlert, 'nameWeeklyAlert', log),
       'monthly-alert': validName(config.nameMonthlyAlert, 'nameMonthlyAlert', log),
     },
   };

@@ -20,7 +20,71 @@ let expireNextGet = false;
 
 const METER_ID = 55123;
 const METER_SERIAL = '000811515025';
+
+const ymd = (d) => {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+const today = () => ymd(new Date());
+const daysAgo = (n) => {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return ymd(d);
+};
+
+/**
+ * What the weekly sensor should read, worked out independently of the plugin:
+ * the days-ago offsets that fall in the calendar week containing today, summed.
+ * The suite runs on whatever weekday it runs on, so the expectation has to be
+ * derived rather than hard-coded — hard-coding one would pass six days a week.
+ */
+const expectedWeek = (published, startsOn = 0) => {
+  const sinceStart = (new Date().getDay() - startsOn + 7) % 7;
+  const offsets = Array.from({ length: sinceStart + 1 }, (_, i) => i).filter(
+    (o) => typeof published[o] === 'number',
+  );
+  return {
+    liters: offsets.reduce((sum, o) => sum + published[o], 0) * 1000,
+    counted: offsets.length,
+    elapsed: sinceStart + 1,
+  };
+};
+
+/** Floating-point-tolerant compare: 0.734 + 0.512 does not land on 1.246. */
+const assertLitres = (actual, expected, label) =>
+  assert.ok(
+    Math.abs(actual - expected) < 0.01,
+    `${label}: expected ${expected} L, got ${actual} L`,
+  );
+
+/**
+ * What the fake portal has published for each day, keyed by how many days ago
+ * it was. `null` is the real "row exists, figure not processed yet" shape, which
+ * is what the portal serves for today for hours — on some accounts, all day.
+ */
+let dailyPublished = { 0: 0.734, 1: 0.512, 2: 0.498, 3: 0.501 };
 let dailyIsNull = false;
+
+/** Enumerates a from/to range the way the daily endpoint does: one row per day. */
+const dailyRows = (from, to) => {
+  const rows = [];
+  for (let offset = 10; offset >= 0; offset -= 1) {
+    const date = daysAgo(offset);
+    if (date < from || date > to) {
+      continue;
+    }
+    const cons = dailyIsNull ? null : (dailyPublished[offset] ?? null);
+    rows.push({
+      meterCount: METER_ID,
+      consDate: `${date}T00:00:00`,
+      cons,
+      estimationType: cons === null ? 0 : 1,
+      commonCons: 0,
+      meterStatusDesc: '-',
+    });
+  }
+  return rows;
+};
 
 const apiFetch = async (url, init = {}) => {
   calls.push(`${init.method ?? 'GET'} ${String(url).replace(/^https:\/\/[^/]+/, '')}`);
@@ -47,35 +111,20 @@ const apiFetch = async (url, init = {}) => {
     return json([{ meterCount: METER_ID, meterId: METER_SERIAL, read: 812.345 }]);
   }
   if (path.startsWith(`/consumption/daily/${METER_ID}/`)) {
-    if (dailyIsNull) {
-      // Exactly what the portal returns before today's reading is published.
-      return json([
-        {
-          meterCount: METER_ID,
-          consDate: '2026-08-19T00:00:00',
-          cons: null,
-          estimationType: 0,
-          commonCons: 0,
-          meterStatusDesc: '-',
-        },
-      ]);
-    }
-    return json([
-      {
-        meterCount: METER_ID,
-        consDate: '2026-08-19T00:00:00',
-        cons: 0.734,
-        estimationType: 1,
-        commonCons: 0,
-        meterStatusDesc: '-',
-      },
-    ]);
+    const [from, to] = path.split('/').slice(-2);
+    assert.match(from, /^\d{4}-\d{2}-\d{2}$/, 'daily range start must be a date');
+    assert.match(to, /^\d{4}-\d{2}-\d{2}$/, 'daily range end must be a date');
+    assert.equal(to, today(), 'the daily range must end at today');
+    assert.ok(from < to, 'the daily range must look back past today');
+    return json(dailyRows(from, to));
   }
   if (path.startsWith(`/consumption/monthly/${METER_ID}/`)) {
+    // The month total, dated to the first of the month — the portal keys off the
+    // month the requested range falls in, not the range itself.
     return json([
       {
         meterCount: METER_ID,
-        consDate: '2026-08-01T00:00:00',
+        consDate: `${today().slice(0, 7)}-01T00:00:00`,
         cons: 14.2,
         estimationType: 1,
         commonCons: 0,
@@ -200,6 +249,22 @@ const launch = async () => {
   handlers.didFinishLaunching?.at(-1)?.();
   await settled();
 };
+
+/**
+ * Waits for a condition rather than for request quiescence. `settled()` watches
+ * for 400ms of no new requests, which a jittered rate-limit backoff can exceed
+ * between retries — so it can return while a poll is still mid-ladder.
+ */
+const waitFor = async (predicate, label, timeoutMs = 10_000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  assert.fail(`timed out waiting for ${label}`);
+};
 const statePath = join(storagePath, '.read-your-meter-pro.json');
 let firstDeviceId;
 
@@ -223,9 +288,12 @@ const platform = new api._ctor(
     password: 'correct-horse',
     unit: 'liters',
     dailyThreshold: 500,
+    weeklyThreshold: 1500,
     monthlyThreshold: 20000,
     exposeForecast: true,
     exposeTotal: true,
+    exposeWeekly: true,
+    weekStart: 'sunday',
     pollInterval: 60,
   },
   api,
@@ -250,7 +318,12 @@ const byName = (name) =>
 
 const lux = (name) => byName(name).getCharacteristic(Characteristic.CurrentAmbientLightLevel).value;
 
-assert.equal(lux('Water Usage Today'), 734, 'daily 0.734 m³ -> 734 L');
+assert.equal(lux('Water Usage Daily'), 734, 'daily 0.734 m³ -> 734 L');
+assertLitres(
+  lux('Water Usage This Week'),
+  expectedWeek(dailyPublished).liters,
+  'this week is the published days from the week start to today',
+);
 assert.equal(lux('Water Usage This Month'), 14200);
 assert.equal(lux('Water Monthly Forecast'), 21800);
 assert.equal(lux('Water Meter Total'), 812.345, 'total stays in m³');
@@ -259,10 +332,15 @@ console.log('✓ light sensors carry the right values');
 const leak = (name) => byName(name).getCharacteristic(Characteristic.LeakDetected).value;
 assert.equal(leak('Water Daily Alert'), 1, '734 L is over the 500 L daily threshold');
 assert.equal(leak('Water Monthly Alert'), 0, '14200 L is under the 20000 L monthly threshold');
+assert.equal(
+  leak('Water Weekly Alert'),
+  expectedWeek(dailyPublished).liters >= 1500 ? 1 : 0,
+  'the weekly alert follows the weekly total against its 1500 L threshold',
+);
 console.log('✓ leak sensors trip on threshold, not before');
 
 assert.equal(
-  byName('Water Usage Today').getCharacteristic(Characteristic.StatusFault).value,
+  byName('Water Usage Daily').getCharacteristic(Characteristic.StatusFault).value,
   Characteristic.StatusFault.NO_FAULT,
 );
 
@@ -290,15 +368,107 @@ console.log('✓ accessory information uses the physical meter serial');
 {
   dailyIsNull = true;
   await platform.poll();
-  assert.equal(lux('Water Usage Today'), 734, 'a null reading must not overwrite the last known value');
+  assert.equal(lux('Water Usage Daily'), 734, 'a null reading must not overwrite the last known value');
   assert.equal(leak('Water Daily Alert'), 1, 'a null reading must not clear a tripped alert');
   dailyIsNull = false;
   await platform.poll();
-  assert.equal(lux('Water Usage Today'), 734);
+  assert.equal(lux('Water Usage Daily'), 734);
   console.log('✓ null daily reading is held, not reported as zero');
 }
 
-// 2c. A poll must trickle its requests rather than burst them: the portal
+// 2c. Some accounts only get a day's figure after that day has ended, so today
+// is null around the clock. Asking about today alone finds nothing on those
+// accounts and the sensor never leaves HomeKit's 0.0001 floor; the most recent
+// published day has to be used instead.
+{
+  // The shape a real account returned: today and yesterday both null, the
+  // newest figure two days back.
+  dailyPublished = { 0: null, 1: null, 2: 0.6, 3: 0.498 };
+  await platform.poll();
+  assert.equal(
+    lux('Water Usage Daily'),
+    600,
+    'a two-day lag must fall back to the newest published day, not sit at the lux floor',
+  );
+  assert.equal(leak('Water Daily Alert'), 1, '600 L is over the 500 L daily threshold');
+
+  // A gap wider than the lookback window is genuinely stale, and holding the
+  // last value beats presenting consumption from another week as current.
+  dailyPublished = { 9: 0.9 };
+  await platform.poll();
+  assert.equal(lux('Water Usage Daily'), 600, 'a figure older than the window must not be adopted');
+
+  // Once today lands it wins, even though older days are published too.
+  dailyPublished = { 0: 0.734, 1: 0.6 };
+  await platform.poll();
+  assert.equal(lux('Water Usage Daily'), 734, "today's figure must win over an earlier day");
+  console.log('✓ daily falls back to the newest published day within the window');
+}
+
+// 2d. Weekly is the current calendar week to date, summed out of the same window
+// the daily figure comes from — no extra requests.
+{
+  const before = calls.length;
+  // Every day of the widest possible week is published here, plus one day that
+  // can never be in it: the week starts at most six days back, so offset 7 is
+  // always outside, and counting it would mean a rolling seven days instead.
+  dailyPublished = { 0: 0.1, 1: 0.2, 2: 0.3, 3: 0.4, 4: 0.5, 5: 0.6, 6: 0.7, 7: 9.9 };
+  await platform.poll();
+
+  const week = expectedWeek(dailyPublished);
+  assertLitres(lux('Water Usage This Week'), week.liters, 'the week so far');
+  assert.ok(
+    lux('Water Usage This Week') < 3000,
+    'the 9.9 m³ from eight days back leaked into the week: that is a rolling window, not a week',
+  );
+  assert.equal(
+    calls.slice(before).filter((c) => c.includes('/consumption/daily/')).length,
+    1,
+    'the weekly figure must reuse the daily window rather than fetch its own',
+  );
+  assert.equal(
+    leak('Water Weekly Alert'),
+    week.liters >= 1500 ? 1 : 0,
+    'the weekly alert trips on the 1500 L threshold',
+  );
+  console.log(
+    `✓ weekly sums the ${week.counted} published day(s) of the current week (${Math.round(week.liters)} L)`,
+  );
+
+  // A week with nothing published is unknown, not zero. In the first days of a
+  // week that is every day of it, and a zero there would both flash an empty
+  // week in the Home app and clear an alert that is still standing.
+  const heldWeek = lux('Water Usage This Week');
+  const heldAlert = leak('Water Weekly Alert');
+  dailyPublished = { 7: 9.9 };
+  await platform.poll();
+  assert.equal(
+    lux('Water Usage This Week'),
+    heldWeek,
+    'a week with no published day must hold its last total, not report zero',
+  );
+  assert.equal(leak('Water Weekly Alert'), heldAlert, 'nor may it move the weekly alert');
+  console.log('✓ a week with nothing published holds instead of reporting zero');
+
+  // Both start days, on fixed dates rather than on whatever weekday the suite
+  // happens to run: 2026-08-20 is a Thursday, 2026-08-16 a Sunday.
+  const { weekStart } = await import('../dist/rympro.js');
+  assert.equal(weekStart('2026-08-20', 0), '2026-08-16');
+  assert.equal(weekStart('2026-08-20', 1), '2026-08-17');
+  assert.equal(weekStart('2026-08-16', 0), '2026-08-16', 'a Sunday starts its own Sunday week');
+  assert.equal(weekStart('2026-08-16', 1), '2026-08-10', 'a Sunday ends the Monday week before it');
+  // Month, year and DST boundaries: Israel moves the clocks on 2026-03-27.
+  assert.equal(weekStart('2026-04-01', 0), '2026-03-29');
+  assert.equal(weekStart('2026-04-01', 1), '2026-03-30');
+  assert.equal(weekStart('2026-01-01', 0), '2025-12-28');
+  assert.equal(weekStart('2026-01-01', 1), '2025-12-29');
+  console.log('✓ week start resolves for Sunday and Monday across month, year and DST edges');
+
+  dailyPublished = { 0: 0.734, 1: 0.512, 2: 0.498, 3: 0.501 };
+  await platform.poll();
+}
+
+// 2e. A poll must trickle its requests rather than burst them: the portal
 // rate-limits bursts, and a 429 on the first request costs the whole poll.
 {
   resetRequestStats();
@@ -338,7 +508,7 @@ console.log('✓ accessory information uses the physical meter serial');
   calls.length = 0;
   await platform.poll();
   assert.equal(loginCount, before + 1, 'exactly one re-login');
-  assert.equal(lux('Water Usage Today'), 734, 'data still refreshed after re-auth');
+  assert.equal(lux('Water Usage Daily'), 734, 'data still refreshed after re-auth');
   assert.ok(
     !logs.slice(logMark).some(([lvl]) => lvl === 'error' || lvl === 'warn'),
     'a token refresh should be silent, not a warning',
@@ -355,9 +525,9 @@ console.log('✓ accessory information uses the physical meter serial');
   await platform.poll();
   rateLimit = null;
 
-  assert.equal(lux('Water Usage Today'), 734, 'the retried poll must still deliver data');
+  assert.equal(lux('Water Usage Daily'), 734, 'the retried poll must still deliver data');
   assert.equal(
-    byName('Water Usage Today').getCharacteristic(Characteristic.StatusFault).value,
+    byName('Water Usage Daily').getCharacteristic(Characteristic.StatusFault).value,
     Characteristic.StatusFault.NO_FAULT,
     'a 429 that was retried successfully must not fault the sensors',
   );
@@ -410,7 +580,7 @@ console.log('✓ accessory information uses the physical meter serial');
 
   assert.equal(starts.length, 4, `expected 1 attempt plus 3 retries, got ${starts.length}`);
   await platform.poll();
-  assert.equal(lux('Water Usage Today'), 734, 'the next poll must recover');
+  assert.equal(lux('Water Usage Daily'), 734, 'the next poll must recover');
   console.log('✓ a persistent 429 gives up after its retry budget');
 }
 
@@ -435,11 +605,11 @@ console.log('✓ accessory information uses the physical meter serial');
 
   await platform.poll();
   assert.equal(
-    byName('Water Usage Today').getCharacteristic(Characteristic.StatusFault).value,
+    byName('Water Usage Daily').getCharacteristic(Characteristic.StatusFault).value,
     Characteristic.StatusFault.NO_FAULT,
     'a single failed poll must not fault the sensors',
   );
-  assert.equal(lux('Water Usage Today'), 734, 'the last known reading must be held');
+  assert.equal(lux('Water Usage Daily'), 734, 'the last known reading must be held');
   assert.ok(
     logs.slice(logMark).some(([lvl, m]) => lvl === 'warn' && m.includes('failure 1 of 3')),
     'the failure should still be reported, with its count',
@@ -450,17 +620,17 @@ console.log('✓ accessory information uses the physical meter serial');
   await platform.poll();
   globalThis.fetch = realFetch;
   assert.equal(
-    byName('Water Usage Today').getCharacteristic(Characteristic.StatusFault).value,
+    byName('Water Usage Daily').getCharacteristic(Characteristic.StatusFault).value,
     Characteristic.StatusFault.GENERAL_FAULT,
     'three consecutive failures must surface as a fault',
   );
-  assert.equal(byName('Water Usage Today').getCharacteristic(Characteristic.StatusActive).value, false);
+  assert.equal(byName('Water Usage Daily').getCharacteristic(Characteristic.StatusActive).value, false);
   assert.ok(logs.some(([lvl, m]) => lvl === 'warn' && m.includes('retry on the next poll')));
   console.log('✓ a persistent failure sets StatusFault and keeps polling');
 
   await platform.poll();
   assert.equal(
-    byName('Water Usage Today').getCharacteristic(Characteristic.StatusFault).value,
+    byName('Water Usage Daily').getCharacteristic(Characteristic.StatusFault).value,
     Characteristic.StatusFault.NO_FAULT,
   );
   console.log('✓ fault clears on recovery');
@@ -489,7 +659,7 @@ console.log('✓ accessory information uses the physical meter serial');
   await launch();
   globalThis.fetch = realFetch;
 
-  const svc = cached.services.find((s) => s.displayName === 'Water Usage Today');
+  const svc = cached.services.find((s) => s.displayName === 'Water Usage Daily');
   assert.equal(
     svc.getCharacteristic(Characteristic.StatusFault).value,
     Characteristic.StatusFault.GENERAL_FAULT,
@@ -505,6 +675,44 @@ console.log('✓ accessory information uses the physical meter serial');
   cold.timer.close?.();
   clearTimeout(cold.timer);
   console.log('✓ failed first poll faults cached accessories and retries fast');
+}
+
+// 6c. A cold start that is being rate-limited must NOT fall back to the 60s
+// cold retry. The portal limits logins per account, so retrying every minute
+// keeps the limit it is waiting on open.
+{
+  const realStorage = activeStoragePath;
+  activeStoragePath = mkdtempSync(join(tmpdir(), 'hb-rympro-429-'));
+  rateLimit = { count: 99, retryAfter: 0 };
+  const limited = new api._ctor(
+    log,
+    {
+      platform: 'ReadYourMeterPro',
+      email: 'aran@example.com',
+      password: 'correct-horse',
+      pollInterval: 720,
+    },
+    api,
+  );
+  await launch();
+  // The retry ladder outlasts settled()'s quiet window, so wait for the poll to
+  // actually finish and arm its next attempt.
+  await waitFor(() => limited.timer, 'the rate-limited poll to arm its retry');
+  rateLimit = null;
+  activeStoragePath = realStorage;
+
+  const delay = limited.timer._idleTimeout;
+  assert.ok(
+    delay >= 15 * 60_000,
+    `a rate-limited cold start must back off >=15min, got ${Math.round(delay / 1000)}s`,
+  );
+  assert.ok(
+    logs.some(([level, m]) => level === 'warn' && /rate-limiting this account/.test(m)),
+    'the long backoff must be explained in the log, not silent',
+  );
+  limited.timer.close?.();
+  clearTimeout(limited.timer);
+  console.log(`✓ a rate-limited cold start backs off ${Math.round(delay / 60_000)}min, not 60s`);
 }
 
 // 7. Bad credentials stop the poll loop rather than hammering the portal.
@@ -603,6 +811,47 @@ console.log('✓ accessory information uses the physical meter serial');
   delete cached.context.names.daily;
 }
 
+// 7c. The case name adoption exists for: an install that predates name
+// persistence has the user's rename on the restored service and nothing in the
+// accessory context, and must keep it rather than be reset one last time. The
+// current default is not adopted, so changing a default is not a no-op.
+{
+  const cached = registered[0];
+  const daily = () => cached.services.find((s) => s.subtype === 'daily');
+  const restart = async (config) => {
+    const p = new api._ctor(
+      log,
+      { platform: 'ReadYourMeterPro', email: 'aran@example.com', password: 'correct-horse', ...config },
+      api,
+    );
+    p.configureAccessory(cached);
+    await launch();
+  };
+
+  delete cached.context.names.daily;
+  daily().updateCharacteristic(Characteristic.ConfiguredName, 'Water Usage Daily');
+  await restart({});
+  assert.equal(
+    cached.context.names.daily,
+    undefined,
+    'the shipped default must not be recorded as a name the user chose',
+  );
+
+  delete cached.context.names.daily;
+  daily().updateCharacteristic(Characteristic.ConfiguredName, 'Kitchen Water');
+  await restart({});
+  assert.equal(
+    cached.context.names.daily,
+    'Kitchen Water',
+    'a rename made before name persistence existed must be adopted',
+  );
+  assert.equal(daily().getCharacteristic(Characteristic.ConfiguredName).value, 'Kitchen Water');
+  console.log('✓ a rename predating name persistence is adopted on upgrade');
+
+  delete cached.context.names.daily;
+  daily().updateCharacteristic(Characteristic.ConfiguredName, 'Water Usage Daily');
+}
+
 // 8. Every sensor can be switched off, and de-configured ones are removed.
 {
   const cached = registered[0];
@@ -626,7 +875,7 @@ console.log('✓ accessory information uses the physical meter serial');
   assert.ok(!names.includes('Water Daily Alert'), `stale service kept: ${names.join(', ')}`);
   assert.ok(!names.includes('Water Monthly Forecast'));
   assert.ok(!names.includes('Water Usage This Month'), 'the monthly sensor must be removable');
-  assert.ok(names.includes('Water Usage Today'));
+  assert.ok(names.includes('Water Usage Daily'));
   console.log('✓ de-configured services are cleaned up, cached accessory reused');
   assert.equal(registered.length, 1, 'no duplicate accessory registered');
 
