@@ -1,8 +1,9 @@
 name: release
 
-# Manual only. Bump the version in package.json, merge that, then run this
-# workflow from the Actions tab with the matching tag. It re-runs the full build,
-# publishes to npm with provenance, and creates the tag and GitHub release.
+# Manual only. Bump the version in package.json, add the matching CHANGELOG.md
+# section, merge that, then run this workflow from the Actions tab with the
+# matching tag. It re-runs the full build, publishes to npm with provenance, and
+# creates the tag and GitHub release with that changelog section as its notes.
 on:
   workflow_dispatch:
     inputs:
@@ -104,6 +105,19 @@ jobs:
           echo "npm_tag=${npm_tag}" >> "$GITHUB_OUTPUT"
           echo "::notice::Releasing ${tag} to npm as \"${npm_tag}\" (prerelease: ${PRERELEASE}, dry run: ${{ inputs.dry_run }})."
 
+      # Checked here, before anything is published, because the release notes
+      # come from CHANGELOG.md and a missing section would otherwise only be
+      # discovered after the package is already on npm.
+      - name: Check the changelog documents this version
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          if ! node scripts/changelog.mjs "${VERSION}" > /dev/null; then
+            echo "::error::CHANGELOG.md has no usable section for ${VERSION}. Add \"## [${VERSION}] - $(date -u +%Y-%m-%d)\" with the notes, merge it, then run this again."
+            exit 1
+          fi
+
   # Reuses the normal build so a publish can only happen on a commit that passes
   # lint, build, the smoke tests on both LTS versions, and the packing check.
   verify:
@@ -172,6 +186,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.check.outputs.tag }}
+          VERSION: ${{ needs.check.outputs.version }}
           PRERELEASE: ${{ inputs.prerelease }}
         run: |
           set -euo pipefail
@@ -179,9 +194,23 @@ jobs:
             echo "::notice::Release ${TAG} already exists — nothing to do."
             exit 0
           fi
+
+          # The changelog is the single source of truth for what a release
+          # contains, so the release notes are that section verbatim rather than
+          # a generated commit list. The check job already proved it exists.
+          notes=$(mktemp)
+          node scripts/changelog.mjs "${VERSION}" > "${notes}"
+          repo_url="https://github.com/${GITHUB_REPOSITORY}"
+          {
+            echo
+            echo "---"
+            echo
+            echo "[Full changelog](${repo_url}/blob/${TAG}/CHANGELOG.md) · [npm](https://www.npmjs.com/package/$(node -p "require('./package.json').name")/v/${VERSION})"
+          } >> "${notes}"
+
           # gh creates the tag at --target, so there is no separate tag push.
           gh release create "${TAG}" \
             --target "${GITHUB_SHA}" \
             --title "${TAG}" \
-            --generate-notes \
+            --notes-file "${notes}" \
             $([ "${PRERELEASE}" = "true" ] && echo --prerelease)

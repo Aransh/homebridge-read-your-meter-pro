@@ -22,7 +22,7 @@ const METER_ID = 55123;
 const METER_SERIAL = '000811515025';
 let dailyIsNull = false;
 
-globalThis.fetch = async (url, init = {}) => {
+const apiFetch = async (url, init = {}) => {
   calls.push(`${init.method ?? 'GET'} ${String(url).replace(/^https:\/\/[^/]+/, '')}`);
   const path = new URL(url).pathname;
 
@@ -96,6 +96,42 @@ function json(body) {
   });
 }
 
+// Request bookkeeping, so the tests can assert the plugin does not fire a burst
+// of concurrent requests at a portal that rate-limits them.
+let inFlight = 0;
+let maxInFlight = 0;
+const starts = [];
+/** Injects HTTP 429s: { count } responses, optionally with a Retry-After. */
+let rateLimit = null;
+
+const resetRequestStats = () => {
+  maxInFlight = 0;
+  starts.length = 0;
+};
+
+globalThis.fetch = async (url, init = {}) => {
+  inFlight += 1;
+  maxInFlight = Math.max(maxInFlight, inFlight);
+  starts.push(Date.now());
+  try {
+    // Never throttles login: a locked-out login has its own test, and mixing the
+    // two would only obscure which path is under test.
+    if (rateLimit && rateLimit.count > 0 && !String(url).includes('/login')) {
+      rateLimit.count -= 1;
+      return new Response('', {
+        status: 429,
+        headers:
+          rateLimit.retryAfter === undefined
+            ? {}
+            : { 'Retry-After': String(rateLimit.retryAfter) },
+      });
+    }
+    return await apiFetch(url, init);
+  } finally {
+    inFlight -= 1;
+  }
+};
+
 // ------------------------------------------------------- fake Homebridge host
 
 const logs = [];
@@ -141,7 +177,20 @@ plugin(api);
 
 // ------------------------------------------------------------------ run tests
 
-const settled = () => new Promise((r) => setTimeout(r, 60));
+/**
+ * Waits for the plugin to go quiet. A poll now paces its requests a few hundred
+ * milliseconds apart, so a single fixed delay would race it.
+ */
+const settled = async () => {
+  for (let i = 0; i < 100; i += 1) {
+    const before = starts.length;
+    await new Promise((r) => setTimeout(r, 400));
+    if (inFlight === 0 && starts.length === before) {
+      return;
+    }
+  }
+  assert.fail('the plugin never stopped making requests');
+};
 /**
  * Fires didFinishLaunching for the most recently constructed platform only.
  * Every platform in this file registers its own handler on the shared api
@@ -249,6 +298,21 @@ console.log('✓ accessory information uses the physical meter serial');
   console.log('✓ null daily reading is held, not reported as zero');
 }
 
+// 2c. A poll must trickle its requests rather than burst them: the portal
+// rate-limits bursts, and a 429 on the first request costs the whole poll.
+{
+  resetRequestStats();
+  await platform.poll();
+  assert.equal(maxInFlight, 1, 'requests must be issued one at a time');
+  assert.ok(starts.length >= 4, `expected one request per endpoint, got ${starts.length}`);
+  const gaps = starts.slice(1).map((t, i) => t - starts[i]);
+  assert.ok(
+    Math.min(...gaps) >= 200,
+    `requests were not paced apart: gaps of ${gaps.join(', ')}ms`,
+  );
+  console.log(`✓ poll issues ${starts.length} requests serially, ${Math.min(...gaps)}ms+ apart`);
+}
+
 // 3. Zero consumption must floor at 0.0001, not throw a HAP warning.
 {
   const { clampLux } = await import('../dist/meterAccessory.js');
@@ -282,6 +346,74 @@ console.log('✓ accessory information uses the physical meter serial');
   console.log('✓ recovers from an expired token');
 }
 
+// 4b. A single 429 is retried inside the same poll, so a burst of throttling
+// does not cost an hour of stale readings.
+{
+  const logMark = logs.length;
+  resetRequestStats();
+  rateLimit = { count: 1 };
+  await platform.poll();
+  rateLimit = null;
+
+  assert.equal(lux('Water Usage Today'), 734, 'the retried poll must still deliver data');
+  assert.equal(
+    byName('Water Usage Today').getCharacteristic(Characteristic.StatusFault).value,
+    Characteristic.StatusFault.NO_FAULT,
+    'a 429 that was retried successfully must not fault the sensors',
+  );
+  const noisy = logs.slice(logMark).filter(([lvl]) => lvl === 'warn' || lvl === 'error');
+  assert.deepEqual(noisy, [], 'a recovered 429 must not be logged as a problem');
+  assert.ok(
+    logs.slice(logMark).some(([lvl, m]) => lvl === 'debug' && m.includes('Rate limited')),
+    'the retry should still be visible in the debug log',
+  );
+  // First rung of the ladder is 2s, jittered by +/-25%. Measured between the
+  // throttled request and its retry so the inter-request pacing is excluded.
+  const backoff = starts[1] - starts[0];
+  assert.ok(
+    backoff >= 1_400 && backoff <= 3_000,
+    `expected a ~2s jittered backoff before the retry, waited ${backoff}ms`,
+  );
+  console.log(`✓ a 429 is retried in-poll after ${backoff}ms and the poll still succeeds`);
+}
+
+// 4c. A Retry-After longer than a poll can sit on ends the poll instead of
+// blocking on it; the next poll is a better place to try again.
+{
+  const logMark = logs.length;
+  resetRequestStats();
+  rateLimit = { count: 99, retryAfter: 3600 };
+  await platform.poll();
+  rateLimit = null;
+
+  assert.equal(
+    starts.length,
+    1,
+    `an hour-long Retry-After must not be waited out, made ${starts.length} attempts`,
+  );
+  assert.ok(
+    logs.slice(logMark).some(([lvl, m]) => lvl === 'warn' && m.includes('HTTP 429')),
+    'giving up on a 429 should be reported',
+  );
+  await platform.poll();
+  console.log('✓ an over-long Retry-After ends the poll instead of stalling it');
+}
+
+// 4d. A 429 that never lets up is given up on after the retry budget rather
+// than being retried forever.
+{
+  resetRequestStats();
+  // Retry-After: 0 keeps the test quick while still exercising every rung.
+  rateLimit = { count: 99, retryAfter: 0 };
+  await platform.poll();
+  rateLimit = null;
+
+  assert.equal(starts.length, 4, `expected 1 attempt plus 3 retries, got ${starts.length}`);
+  await platform.poll();
+  assert.equal(lux('Water Usage Today'), 734, 'the next poll must recover');
+  console.log('✓ a persistent 429 gives up after its retry budget');
+}
+
 // 5. Persisted state survives a restart (device id is stable).
 {
   const { readFileSync } = await import('node:fs');
@@ -293,21 +425,38 @@ console.log('✓ accessory information uses the physical meter serial');
   console.log('✓ device id and token persisted to the Homebridge storage dir');
 }
 
-// 6. Network failure faults the services instead of crashing.
+// 6. A one-off failure holds its readings; only a persistent one faults.
 {
+  const logMark = logs.length;
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => {
     throw new TypeError('fetch failed');
   };
+
+  await platform.poll();
+  assert.equal(
+    byName('Water Usage Today').getCharacteristic(Characteristic.StatusFault).value,
+    Characteristic.StatusFault.NO_FAULT,
+    'a single failed poll must not fault the sensors',
+  );
+  assert.equal(lux('Water Usage Today'), 734, 'the last known reading must be held');
+  assert.ok(
+    logs.slice(logMark).some(([lvl, m]) => lvl === 'warn' && m.includes('failure 1 of 3')),
+    'the failure should still be reported, with its count',
+  );
+  console.log('✓ one failed poll holds its readings instead of faulting');
+
+  await platform.poll();
   await platform.poll();
   globalThis.fetch = realFetch;
   assert.equal(
     byName('Water Usage Today').getCharacteristic(Characteristic.StatusFault).value,
     Characteristic.StatusFault.GENERAL_FAULT,
+    'three consecutive failures must surface as a fault',
   );
   assert.equal(byName('Water Usage Today').getCharacteristic(Characteristic.StatusActive).value, false);
   assert.ok(logs.some(([lvl, m]) => lvl === 'warn' && m.includes('retry on the next poll')));
-  console.log('✓ transient failure sets StatusFault and keeps polling');
+  console.log('✓ a persistent failure sets StatusFault and keeps polling');
 
   await platform.poll();
   assert.equal(
