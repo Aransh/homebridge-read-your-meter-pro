@@ -11,6 +11,72 @@ headings in the `## [x.y.z] - YYYY-MM-DD` form.
 
 ## [Unreleased]
 
+## [1.0.0-beta.4] - 2026-08-20
+
+### Added
+
+- Weekly sensors, both off by default: `Water Usage This Week` (a light sensor,
+  `exposeWeekly`) and `Water Weekly Alert` (a leak sensor, `weeklyThreshold`).
+  The figure is the **current calendar week to date**, not a rolling seven days,
+  and it resets on the `weekStart` day — `sunday` by default, `monday` optional.
+  It is summed from the daily window the plugin already fetches, so it adds no
+  requests. The publication lag applies: the total covers only the days the
+  portal has published, and the debug log reports how many that is
+  (`week=911L (3 of 5 days from 2026-08-16)`). A week with nothing published yet
+  holds the previous week's total rather than showing zero, so at a week boundary
+  both the sensor and its alert can lag by a day or two.
+- `nameWeekly` and `nameWeeklyAlert` join the other name overrides.
+
+### Fixed
+
+- `Water Usage Daily` could sit at `0.0001 lux` indefinitely. The daily lookup
+  only ever asked the portal about today, but the portal publishes a day's figure
+  a day or more after that day starts — measured on a real account, both today
+  and yesterday came back `cons: null` and the newest published figure was two
+  days old — so no value was ever reported and the sensor never left HomeKit's
+  floor. The lookup now asks for a seven-day window and uses the most recent
+  published day, preferring today's figure when it exists. The day a figure
+  belongs to is logged at debug level (`daily=140L (for 2026-08-18)`) so a
+  lagging portal is distinguishable from a stuck reading.
+- A `null` consumption figure reaching the numeric conversion would have become
+  `0` rather than "no reading", because `Number(null)` is `0`. The daily path
+  guarded against this before converting; the monthly and forecast paths did not,
+  so a null there was reported as zero consumption — and would have cleared a
+  tripped monthly alert.
+- The daily lookup no longer picks a row by position. It selects by `consDate`,
+  which the range query makes load-bearing: the portal happens to return days in
+  ascending order, but nothing documents that.
+
+- A rate-limited cold start no longer retries every minute. Before the first
+  successful poll the retry delay was a flat 60 seconds, including when the
+  failure was `HTTP 429` — and since the portal limits logins per account, each
+  of those retries re-attempted a login and held open the limit it was waiting
+  on. A poll throttled past its retry budget now backs off 15 minutes, and says
+  so in the log.
+- `npm run probe` no longer registers a new device on every run. It generated a
+  fresh `deviceId` per invocation, so each run was a new device registration plus
+  a new login; a handful of runs could exhaust the account's login limit and lock
+  out the plugin as well. It now caches a device id and session token in
+  `.probe-state.json` (mode 0600, gitignored), reuses the token until it expires,
+  and can borrow the running plugin's session instead via `RYM_STATE_FILE`.
+- The probe reports an `HTTP 429` as a rate limit, with the `Retry-After` the
+  portal sent and what to do about it, instead of `code=429` and an opaque
+  message. It also spaces its requests like the plugin does.
+
+### Changed
+
+- `npm run probe` also dumps the daily endpoint over a seven-day window and
+  prints which days came back published, which is what identifies a publication
+  lag on a given account.
+- Docs and the settings form no longer describe the daily sensor as today's
+  consumption. It is the latest day the portal has published, which is not always
+  today, and the daily alert is correspondingly a verdict on a completed day
+  rather than a live figure.
+- The daily sensor's default name is `Water Usage Daily`, since `Water Usage
+  Today` promised something the portal does not reliably deliver. A sensor that
+  already exists keeps whatever name it is currently showing; rename it in the
+  Home app if you want the new one.
+
 ## [1.0.0-beta.3] - 2026-08-20
 
 ### Added
@@ -107,7 +173,8 @@ First public prerelease.
   check that fails if the published tarball loses `dist/` or
   `config.schema.json`.
 
-[Unreleased]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.3...HEAD
+[Unreleased]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.4...HEAD
+[1.0.0-beta.4]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.3...v1.0.0-beta.4
 [1.0.0-beta.3]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.2...v1.0.0-beta.3
 [1.0.0-beta.2]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.1...v1.0.0-beta.2
 [1.0.0-beta.1]: https://github.com/Aransh/homebridge-read-your-meter-pro/releases/tag/v1.0.0-beta.1

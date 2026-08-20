@@ -12,6 +12,23 @@ const CONSUMPTION_URL = `${BASE_URL}/consumption`;
 const REQUEST_TIMEOUT_MS = 30_000;
 
 /**
+ * How many days before today the daily lookup is willing to accept a figure
+ * from. The portal returns a row for each day from midnight but leaves `cons`
+ * null until that day's reading has been processed, and the lag is not a few
+ * hours: on the account this was measured against, both today and yesterday were
+ * null and the newest published day was two days back. Asking only about today
+ * therefore never finds anything at all there. A week is enough to absorb that
+ * lag plus a missed transmission or two; the day a figure belongs to is reported
+ * alongside it, so a stale one is identifiable rather than silently passed off as
+ * current.
+ *
+ * Seven days is also the minimum that always spans the current week, which the
+ * weekly figure sums out of this same window: the week's start day is at most six
+ * days back. Shortening this would silently truncate the weekly total.
+ */
+const DAILY_LOOKBACK_DAYS = 7;
+
+/**
  * Minimum gap between two outbound requests. The portal rate-limits bursts, and
  * the handful of requests a poll makes have no reason to be simultaneous.
  */
@@ -50,6 +67,12 @@ export class RateLimitedError extends OperationError {
 }
 
 export interface RymProClientOptions {
+  /**
+   * Day the weekly total resets on, 0 for Sunday. The daily window already
+   * covers the current week, so the weekly figure is an aggregate of data
+   * already fetched rather than another request.
+   */
+  weekStartsOn?: 0 | 1;
   /** Receives a freshly issued token so it can be persisted. */
   onToken?: (token: string) => void;
   /** Retry diagnostics, wired to the Homebridge debug log. */
@@ -68,16 +91,45 @@ export interface MeterRead {
   [key: string]: unknown;
 }
 
+/** A row from either consumption endpoint. `cons` is null until published. */
+interface ConsumptionRow {
+  /** Local-time stamp of the period, e.g. "2026-08-20T00:00:00". */
+  consDate?: unknown;
+  cons?: unknown;
+  [key: string]: unknown;
+}
+
 export interface MeterSnapshot {
   meterCount: number;
   /** Cumulative reading, m³. */
   total: number;
   /**
-   * Consumption so far today, m³. Null when the portal has produced no reading
-   * for today yet — it returns a row with `cons: null` for much of the day,
-   * which is not the same thing as zero water used.
+   * Consumption for the most recent day the portal has published, m³. Null when
+   * it has published nothing within the lookback window — it returns a row with
+   * `cons: null` until a day's reading is processed, which is not the same thing
+   * as zero water used.
    */
   daily: number | null;
+  /**
+   * Which day `daily` is for, YYYY-MM-DD. Today when the portal has caught up,
+   * an earlier date when it has not. Null when `daily` is null.
+   */
+  dailyDate: string | null;
+  /**
+   * Consumption so far in the current week, m³ — the published days from the
+   * week's start day onwards, summed. Null when the week has no published day
+   * yet, which is not the same thing as no water used.
+   */
+  weekly: number | null;
+  /** First day of the current week, YYYY-MM-DD. */
+  weekStart: string;
+  /**
+   * How many days of the current week `weekly` actually covers, and how many
+   * have begun. `2 of 4` says the total is missing two days to the publication
+   * lag, which is the difference between a low week and an incomplete one.
+   */
+  weeklyDaysCounted: number;
+  weeklyDaysElapsed: number;
   /** Consumption so far this month, m³. Null if no reading yet. */
   monthly: number | null;
   /** Forecast consumption for the full month, m³. Null if unavailable. */
@@ -88,6 +140,7 @@ export interface MeterSnapshot {
 
 export class RymProClient {
   private token: string | null = null;
+  private readonly weekStartsOn: 0 | 1;
   private readonly onToken?: (token: string) => void;
   private readonly onRetry?: (message: string) => void;
   private readonly signal?: AbortSignal;
@@ -104,6 +157,7 @@ export class RymProClient {
     private readonly deviceId: string,
     options: RymProClientOptions = {},
   ) {
+    this.weekStartsOn = options.weekStartsOn ?? 0;
     this.onToken = options.onToken;
     this.onRetry = options.onRetry;
     this.signal = options.signal;
@@ -197,14 +251,22 @@ export class RymProClient {
       // requests is what trips the portal's rate limiter, and a 429 on the first
       // of them costs the whole poll. A poll has an hour to complete; there is
       // nothing to gain from a burst.
-      const daily = await this.periodConsumption('daily', meterCount, today);
-      const monthly = await this.periodConsumption('monthly', meterCount, today);
+      // One window request serves both the daily and the weekly figure.
+      const published = await this.publishedDays(meterCount, today);
+      const daily = published[0] ?? { value: null, date: null };
+      const week = this.currentWeek(published, today);
+      const monthly = await this.monthlyConsumption(meterCount, today);
       const forecast = await this.forecast(meterCount);
 
       snapshots.push({
         meterCount,
         total: toNumber(meter.read) ?? 0,
-        daily,
+        daily: daily.value,
+        dailyDate: daily.date,
+        weekly: week.value,
+        weekStart: week.start,
+        weeklyDaysCounted: week.counted,
+        weeklyDaysElapsed: week.elapsed,
         monthly,
         forecast,
         serial: typeof meter.meterId === 'string' ? meter.meterId : undefined,
@@ -213,25 +275,75 @@ export class RymProClient {
     return snapshots;
   }
 
-  private async periodConsumption(
-    period: 'daily' | 'monthly',
+  /**
+   * Every day in the lookback window the portal has actually published, newest
+   * first. Empty when it has published nothing — which is not the same thing as
+   * zero water used, so callers must not read that as a zero.
+   *
+   * Sorted rather than taken in order: the portal happens to return the range
+   * ascending, but nothing documents that, and reading a figure off a fixed
+   * position was the original bug.
+   */
+  private async publishedDays(
     meterCount: number,
-    date: string,
-  ): Promise<number | null> {
-    const rows = await this.get<Array<{ cons?: unknown }>>(
-      `${CONSUMPTION_URL}/${period}/${meterCount}/${date}/${date}`,
+    today: string,
+  ): Promise<Array<{ value: number; date: string }>> {
+    const from = shiftDays(today, -DAILY_LOOKBACK_DAYS);
+    const rows = await this.get<ConsumptionRow[]>(
+      `${CONSUMPTION_URL}/daily/${meterCount}/${from}/${today}`,
     );
-    // Two distinct "no data" shapes: an empty array, or a row whose `cons` is
-    // explicitly null. Both mean the reading has not been produced yet, which
-    // must not be reported as zero consumption.
+    if (!Array.isArray(rows)) {
+      return [];
+    }
+    return rows
+      .map((row) => ({ value: toNumber(row?.cons), date: rowDate(row) }))
+      .filter((row): row is { value: number; date: string } => row.value !== null && row.date !== null)
+      .sort((a, b) => b.date.localeCompare(a.date));
+  }
+
+  /**
+   * Consumption so far in the calendar week containing `today` — the current
+   * week, not a rolling seven days, so it resets on the week's start day the way
+   * the monthly figure resets on the first of the month.
+   *
+   * The publication lag means the total is normally missing its most recent day
+   * or two, so the day counts come back with it. A week with nothing published
+   * yet is null rather than zero: for the first days of a week that is every
+   * day of it.
+   */
+  private currentWeek(
+    published: Array<{ value: number; date: string }>,
+    today: string,
+  ): { value: number | null; start: string; counted: number; elapsed: number } {
+    const start = weekStart(today, this.weekStartsOn);
+    const inWeek = published.filter((day) => day.date >= start && day.date <= today);
+    const elapsed = daysBetween(start, today) + 1;
+
+    if (inWeek.length === 0) {
+      return { value: null, start, counted: 0, elapsed };
+    }
+    return {
+      value: inWeek.reduce((sum, day) => sum + day.value, 0),
+      start,
+      counted: inWeek.length,
+      elapsed,
+    };
+  }
+
+  /**
+   * Consumption for the calendar month containing `date`. The endpoint keys off
+   * the month the range falls in rather than the range itself — asked about a
+   * single day it answers with a row dated to the first of that month, carrying
+   * the month-to-date total — so a one-day range is all it needs.
+   */
+  private async monthlyConsumption(meterCount: number, date: string): Promise<number | null> {
+    const rows = await this.get<ConsumptionRow[]>(
+      `${CONSUMPTION_URL}/monthly/${meterCount}/${date}/${date}`,
+    );
     if (!Array.isArray(rows) || rows.length === 0) {
       return null;
     }
-    const cons = rows[0]?.cons;
-    if (cons === null || cons === undefined) {
-      return null;
-    }
-    return toNumber(cons);
+    return toNumber(rows[0]?.cons);
   }
 
   private async forecast(meterId: number): Promise<number | null> {
@@ -402,7 +514,56 @@ function localDate(now = new Date()): string {
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
 
+/**
+ * The YYYY-MM-DD a row belongs to. `consDate` carries a time component that is
+ * always midnight local, so it is truncated rather than parsed — going through
+ * `Date` would reinterpret it as UTC and shift the day.
+ */
+function rowDate(row: ConsumptionRow | undefined): string | null {
+  const value = row?.consDate;
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const date = value.slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+}
+
+/** Shifts a YYYY-MM-DD by whole days, staying on calendar days across DST. */
+function shiftDays(date: string, days: number): string {
+  const [year, month, day] = date.split('-').map(Number);
+  // Noon, so that a DST transition cannot round the result onto the wrong day.
+  const shifted = new Date(year, month - 1, day + days, 12);
+  return localDate(shifted);
+}
+
+/** Midday local Date for a YYYY-MM-DD, safe to do day arithmetic on. */
+function noon(date: string): Date {
+  const [year, month, day] = date.split('-').map(Number);
+  return new Date(year, month - 1, day, 12);
+}
+
+/**
+ * First day of the calendar week containing `date`. `startsOn` is 0 for Sunday,
+ * matching `Date.getDay`. Exported so the smoke test can check both start days
+ * against known dates rather than only whichever weekday it happens to run on.
+ */
+export function weekStart(date: string, startsOn: 0 | 1): string {
+  const offset = (noon(date).getDay() - startsOn + 7) % 7;
+  return shiftDays(date, -offset);
+}
+
+/** Whole days from `from` to `to`. Both are YYYY-MM-DD. */
+function daysBetween(from: string, to: string): number {
+  return Math.round((noon(to).getTime() - noon(from).getTime()) / 86_400_000);
+}
+
 function toNumber(value: unknown): number | null {
+  // `Number(null)` is 0 and `Number('')` is 0, so both have to be rejected
+  // before the coercion: the portal uses null for "not published yet", and
+  // reporting that as zero consumption is the thing this plugin must not do.
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
   const n = Number(value);
   return Number.isFinite(n) ? n : null;
 }

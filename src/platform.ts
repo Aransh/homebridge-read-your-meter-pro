@@ -14,6 +14,7 @@ import type {
 import { MeterAccessory } from './meterAccessory.js';
 import {
   CannotConnectError,
+  RateLimitedError,
   RymProClient,
   UnauthorizedError,
   type MeterSnapshot,
@@ -30,6 +31,14 @@ const STATE_FILE_NAME = '.read-your-meter-pro.json';
 
 /** Retry delay used only before the first successful poll. */
 const COLD_RETRY_MS = 60_000;
+
+/**
+ * Retry delay after a poll that was rate-limited even after its in-poll retries.
+ * The portal limits logins per account, so the cold-start minute is exactly the
+ * wrong answer here: it re-attempts a login every 60s and keeps the account
+ * pinned against the limit it is waiting to clear.
+ */
+const RATE_LIMITED_RETRY_MS = 15 * 60_000;
 
 /**
  * Consecutive failed polls tolerated before the sensors report a fault. A single
@@ -63,6 +72,8 @@ export class RymProPlatform implements DynamicPlatformPlugin {
   private writeQueue: Promise<void> = Promise.resolve();
   private hadSuccessfulPoll = false;
   private consecutiveFailures = 0;
+  /** Set when the poll that just failed was rate-limited, read by scheduleNext. */
+  private rateLimited = false;
   /** Cancels in-flight requests and pending backoff at shutdown. */
   private readonly shutdown = new AbortController();
 
@@ -122,6 +133,7 @@ export class RymProPlatform implements DynamicPlatformPlugin {
     }
 
     this.client = new RymProClient(settings.email, settings.password, state.deviceId, {
+      weekStartsOn: settings.weekStart === 'monday' ? 1 : 0,
       onToken: (token) => this.persist({ token }),
       onRetry: (msg) => this.log.debug(msg),
       signal: this.shutdown.signal,
@@ -181,6 +193,15 @@ export class RymProPlatform implements DynamicPlatformPlugin {
       this.log.warn(
         `${kind} Read Your Meter Pro: ${message(error)}. Will retry on the next poll.${held}`,
       );
+
+      if (error instanceof RateLimitedError) {
+        this.rateLimited = true;
+        this.log.warn(
+          'The portal is rate-limiting this account. Backing off for ' +
+            `${RATE_LIMITED_RETRY_MS / 60_000} minutes rather than retrying sooner, which would ` +
+            'hold the limit open. Nothing to fix — it clears on its own.',
+        );
+      }
     }
 
     this.scheduleNext();
@@ -193,8 +214,13 @@ export class RymProPlatform implements DynamicPlatformPlugin {
     // Until the first poll succeeds there is nothing on screen, so a full
     // interval of blankness after a restart during a portal outage is a poor
     // experience. Retry quickly until there is something to show, then settle
-    // into the configured interval.
-    const delay = this.hadSuccessfulPoll ? this.settings.pollIntervalMs : COLD_RETRY_MS;
+    // into the configured interval — except when the reason there is nothing to
+    // show is a rate limit, where retrying quickly is what sustains it.
+    let delay = this.hadSuccessfulPoll ? this.settings.pollIntervalMs : COLD_RETRY_MS;
+    if (this.rateLimited) {
+      delay = Math.max(delay, RATE_LIMITED_RETRY_MS);
+      this.rateLimited = false;
+    }
     this.timer = setTimeout(() => {
       void this.poll();
     }, delay);

@@ -21,10 +21,12 @@ interface ServiceSpec {
 
 const SENSOR_KINDS: Record<SensorKey, 'light' | 'leak'> = {
   daily: 'light',
+  weekly: 'light',
   monthly: 'light',
   forecast: 'light',
   total: 'light',
   'daily-alert': 'leak',
+  'weekly-alert': 'leak',
   'monthly-alert': 'leak',
 };
 
@@ -149,6 +151,8 @@ export class MeterAccessory {
     const current = service.testCharacteristic(this.platform.Characteristic.ConfiguredName)
       ? service.getCharacteristic(this.platform.Characteristic.ConfiguredName).value
       : service.getCharacteristic(this.platform.Characteristic.Name).value;
+    // The current default was never the user's choice, so adopting it would pin
+    // it and make a later change of default a no-op.
     if (
       typeof current === 'string' &&
       current !== DEFAULT_NAMES[spec.key] &&
@@ -187,12 +191,14 @@ export class MeterAccessory {
 
     const scale = (v: number | null) => (v === null ? null : v * factor);
     const daily = scale(snapshot.daily);
+    const weekly = scale(snapshot.weekly);
     const monthly = scale(snapshot.monthly);
 
     // A null reading means "not published yet", not "zero". Leaving the last
     // known value in place beats flashing a zero every morning; the very first
     // poll has nothing to keep, so it floors instead.
     this.setLux('daily', daily);
+    this.setLux('weekly', weekly);
     this.setLux('monthly', monthly);
     this.setLux('forecast', scale(snapshot.forecast));
     // Total is always m³: a cumulative reading in litres blows past the
@@ -210,6 +216,9 @@ export class MeterAccessory {
     if (daily !== null) {
       this.setLeak('daily-alert', daily >= this.config.dailyThreshold);
     }
+    if (weekly !== null) {
+      this.setLeak('weekly-alert', weekly >= this.config.weeklyThreshold);
+    }
     if (monthly !== null) {
       this.setLeak('monthly-alert', monthly >= this.config.monthlyThreshold);
     }
@@ -224,9 +233,18 @@ export class MeterAccessory {
 
     const unitLabel = this.unit === 'liters' ? 'L' : 'm³';
     const show = (v: number | null) => (v === null ? 'no reading yet' : `${round(v)}${unitLabel}`);
+    // The day the daily figure is for is worth logging: when the portal is
+    // behind, the sensor is showing a completed earlier day, and without the
+    // date that is indistinguishable from a stuck reading.
+    const dailyFor = snapshot.dailyDate === null ? '' : ` (for ${snapshot.dailyDate})`;
+    // Likewise for the week: "3 of 5 days" is what distinguishes a genuinely low
+    // week from one the portal has not finished publishing.
+    const weekOf = ` (${snapshot.weeklyDaysCounted} of ${snapshot.weeklyDaysElapsed} days ` +
+      `from ${snapshot.weekStart})`;
     this.platform.log.debug(
-      `Meter ${snapshot.meterCount}: today=${show(daily)} month=${show(monthly)} ` +
-        `forecast=${show(scale(snapshot.forecast))} total=${round(snapshot.total)}m³`,
+      `Meter ${snapshot.meterCount}: daily=${show(daily)}${dailyFor} week=${show(weekly)}${weekOf} ` +
+        `month=${show(monthly)} forecast=${show(scale(snapshot.forecast))} ` +
+        `total=${round(snapshot.total)}m³`,
     );
   }
 

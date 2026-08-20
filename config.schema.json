@@ -56,12 +56,39 @@
         ],
         "description": "Litres read better in the Home app: 734 instead of 0.734."
       },
+      "weekStart": {
+        "title": "Week starts on",
+        "type": "string",
+        "default": "sunday",
+        "oneOf": [
+          {
+            "title": "Sunday",
+            "enum": [
+              "sunday"
+            ]
+          },
+          {
+            "title": "Monday",
+            "enum": [
+              "monday"
+            ]
+          }
+        ],
+        "description": "Which day the weekly total resets on. Only affects the weekly sensor and its alert."
+      },
       "dailyThreshold": {
         "title": "Daily alert threshold",
         "type": "number",
         "default": 0,
         "minimum": 0,
-        "description": "Trips the daily alert when today's consumption reaches this value, in the unit selected above. A rough starting point is 400 litres per person per day — roughly double a normal day, so it flags a genuine problem rather than a long shower. Watch the plugin's debug log for a week and adjust. 0 removes the sensor."
+        "description": "Trips the daily alert when the latest published day's consumption reaches this value, in the unit selected above. Note the portal publishes a day's figure a day or two late, so this is a budget alarm on a completed day, not a live one. A rough starting point is 400 litres per person per day — roughly double a normal day, so it flags a genuine problem rather than a long shower. Watch the plugin's debug log for a week and adjust. 0 removes the sensor."
+      },
+      "weeklyThreshold": {
+        "title": "Weekly alert threshold",
+        "type": "number",
+        "default": 0,
+        "minimum": 0,
+        "description": "Trips the weekly alert when the current week's consumption so far reaches this value. The week runs from the start day set under Advanced, and the total is missing whichever recent days the portal has not published yet, so treat it as a floor. 0 removes the sensor."
       },
       "monthlyThreshold": {
         "title": "Monthly alert threshold",
@@ -71,9 +98,16 @@
         "description": "Trips the monthly alert when this month's consumption reaches this value. 3500 litres per person per month is the subsidised household allocation in Israel, so that is a useful place to put it: the alert then means \"from here on the water costs about double\". 0 removes the sensor."
       },
       "exposeDaily": {
-        "title": "Today's consumption",
+        "title": "Latest daily consumption",
+        "description": "The most recent day the portal has published — often not today, since figures land a day or two late.",
         "type": "boolean",
         "default": true
+      },
+      "exposeWeekly": {
+        "title": "This week's consumption",
+        "description": "Consumption so far in the current week, which resets on the week start day. Summed from the daily figures already fetched, so it costs no extra requests.",
+        "type": "boolean",
+        "default": false
       },
       "exposeMonthly": {
         "title": "This month's consumption",
@@ -93,9 +127,14 @@
         "description": "Always reported in m³, since a lifetime total in litres exceeds HomeKit's 100000 ceiling."
       },
       "nameDaily": {
-        "title": "Today's consumption",
+        "title": "Latest daily consumption",
         "type": "string",
-        "placeholder": "Water Usage Today"
+        "placeholder": "Water Usage Daily"
+      },
+      "nameWeekly": {
+        "title": "This week's consumption",
+        "type": "string",
+        "placeholder": "Water Usage This Week"
       },
       "nameMonthly": {
         "title": "This month's consumption",
@@ -117,6 +156,11 @@
         "type": "string",
         "placeholder": "Water Daily Alert"
       },
+      "nameWeeklyAlert": {
+        "title": "Weekly alert sensor",
+        "type": "string",
+        "placeholder": "Water Weekly Alert"
+      },
       "nameMonthlyAlert": {
         "title": "Monthly alert sensor",
         "type": "string",
@@ -134,17 +178,19 @@
       "expanded": true,
       "items": [
         "dailyThreshold",
+        "weeklyThreshold",
         "monthlyThreshold"
       ]
     },
     {
       "type": "fieldset",
       "title": "Sensors",
-      "description": "Switching a sensor off removes it from HomeKit on the next restart. The two alert sensors are controlled by their thresholds above: 0 removes them.",
+      "description": "Switching a sensor off removes it from HomeKit on the next restart. The three alert sensors are controlled by their thresholds above: 0 removes them.",
       "expandable": true,
       "expanded": false,
       "items": [
         "exposeDaily",
+        "exposeWeekly",
         "exposeMonthly",
         "exposeForecast",
         "exposeTotal"
@@ -158,10 +204,12 @@
       "expanded": false,
       "items": [
         "nameDaily",
+        "nameWeekly",
         "nameMonthly",
         "nameForecast",
         "nameTotal",
         "nameDailyAlert",
+        "nameWeeklyAlert",
         "nameMonthlyAlert"
       ]
     },
@@ -173,6 +221,7 @@
       "items": [
         "name",
         "unit",
+        "weekStart",
         "pollInterval"
       ]
     }

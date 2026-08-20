@@ -13,12 +13,26 @@ show "0.734 m³" in the Home app. This plugin works around that:
 
 | What you get | How | Default name | On by default |
 | --- | --- | --- | --- |
-| Today's consumption | Light sensor | `Water Usage Today` | yes |
+| Latest daily consumption[^lag] | Light sensor | `Water Usage Daily` | yes |
+| This week's consumption[^week] | Light sensor | `Water Usage This Week` | no |
 | This month's consumption | Light sensor | `Water Usage This Month` | yes |
 | Month-end forecast | Light sensor | `Water Monthly Forecast` | yes |
 | Cumulative meter reading | Light sensor, always m³ | `Water Meter Total` | no |
 | Daily threshold exceeded | Leak sensor | `Water Daily Alert` | when a threshold is set |
+| Weekly threshold exceeded | Leak sensor | `Water Weekly Alert` | when a threshold is set |
 | Monthly threshold exceeded | Leak sensor | `Water Monthly Alert` | when a threshold is set |
+
+[^lag]: **Not always today's.** The portal publishes a day's consumption some
+    time after that day starts, and how long varies by account — on the one this
+    was tested against, today and yesterday were both still unpublished and the
+    newest figure was two days old. The sensor shows the most recent day the
+    portal has actually published. See
+    [Missing readings](#behaviour-worth-knowing).
+
+[^week]: The current calendar week to date, resetting on the start day set by
+    `weekStart` (Sunday by default), not a rolling seven days. It is summed from
+    the daily figures the plugin already fetches, so it costs no extra requests —
+    and it is missing whichever recent days the portal has not published yet.
 
 Light sensors show up in the Home app as a number and the word `lux` — `734 lux`
 means 734 litres. Every sensor can be switched off individually, and every name
@@ -85,7 +99,10 @@ Use the Homebridge UI settings form, or add to `config.json`:
       "unit": "liters",
       "pollInterval": 60,
       "dailyThreshold": 800,
+      "weeklyThreshold": 3500,
       "monthlyThreshold": 14000,
+      "weekStart": "sunday",
+      "exposeWeekly": true,
       "exposeForecast": true,
       "exposeTotal": false
     }
@@ -97,11 +114,14 @@ Use the Homebridge UI settings form, or add to `config.json`:
 | --- | --- | --- |
 | `email` | — | Required. |
 | `password` | — | Required. |
-| `unit` | `liters` | `liters` or `cubic_meters`. Applies to daily/monthly/forecast. |
+| `unit` | `liters` | `liters` or `cubic_meters`. Applies to daily/weekly/monthly/forecast. |
 | `pollInterval` | `60` | Minutes. Floored at 15. |
 | `dailyThreshold` | `0` | In `unit`. `0` removes the daily alert sensor. |
+| `weeklyThreshold` | `0` | In `unit`. `0` removes the weekly alert sensor. |
 | `monthlyThreshold` | `0` | In `unit`. `0` removes the monthly alert sensor. |
-| `exposeDaily` | `true` | Today's consumption. |
+| `weekStart` | `sunday` | `sunday` or `monday`. Which day the weekly total resets on. |
+| `exposeDaily` | `true` | Latest published day's consumption. |
+| `exposeWeekly` | `false` | This week's consumption so far. |
 | `exposeMonthly` | `true` | This month's consumption. |
 | `exposeForecast` | `true` | Month-end estimate. |
 | `exposeTotal` | `false` | Cumulative reading. Always m³. |
@@ -122,16 +142,24 @@ house, whether you have a garden, and what the season is. Two anchors:
   `400 × people` litres, so 1600 L for a family of four — high enough that a
   long shower or a load of laundry does not trip it, low enough to catch a stuck
   irrigation valve or a running toilet within a day.
+- **Weekly.** Between the two, and less jumpy than the daily one: a single heavy
+  day does not trip it, a week of them does. Roughly a quarter of the monthly
+  allocation is a sensible start — `875 × people` litres, so 3500 L for a family
+  of four — which lands the alert late in a week that is heading over budget.
+  Remember it only counts the days the portal has published, so a week that is
+  genuinely over may not show it until a day or two later.
 
 Then correct with your own data: run for a week with Homebridge debug logging on
-and look at the `today=` and `month=` lines, or read the same figures in the
+and look at the `daily=` and `month=` lines, or read the same figures in the
 Read Your Meter Pro app. Set the daily threshold above your worst normal day.
 
 Note what these alerts are and are not. They fire on *cumulative consumption in
-the period*, so a daily alert stays tripped until midnight and a monthly one
-until the month rolls over — they are budget alarms, not flow detectors. The
-portal only publishes hourly at best, so a burst pipe is caught in hours, not
-seconds.
+the period*, so a daily alert stays tripped until the next published day and a
+monthly one until the month rolls over — they are budget alarms, not flow
+detectors. And the daily one judges whichever day the portal has published most
+recently, which on some accounts is two days back, so it reports a day you have
+already finished living. Check your own lag with `npm run probe` before relying
+on the timing of it.
 
 ### Naming
 
@@ -139,8 +167,9 @@ Every sensor name can be changed, and the change sticks:
 
 - **Rename in the Home app** (long-press a tile → settings → name). The plugin
   records the new name in Homebridge's accessory cache, so restarts keep it.
-- **Or pin it in config.json** with `nameDaily`, `nameMonthly`, `nameForecast`,
-  `nameTotal`, `nameDailyAlert`, `nameMonthlyAlert`. A name set here wins over a
+- **Or pin it in config.json** with `nameDaily`, `nameWeekly`, `nameMonthly`,
+  `nameForecast`, `nameTotal`, `nameDailyAlert`, `nameWeeklyAlert`,
+  `nameMonthlyAlert`. A name set here wins over a
   rename made in the Home app, and will overwrite one on the next restart — it
   is the escape hatch, not the normal path. Leave these empty to rename in the
   Home app instead.
@@ -165,15 +194,48 @@ below 15 minutes.
 
 ## Behaviour worth knowing
 
-- **Missing readings**: the portal publishes today's figure some hours into the
-  day, and returns `cons: null` until it does. That is not the same as zero water
-  used, so the plugin does not report it as zero — it leaves the sensor showing
-  the last value it had. In practice that means `Water Usage Today` shows *yesterday's*
-  total for part of the morning, then jumps to today's once the portal catches
-  up. On a brand-new install there is no previous value to keep, so the sensor
-  sits at `0.0001 lux` (HomeKit's floor for a light sensor, and the same value a
-  genuine zero reads as) until the first real reading lands. The alerts do not
-  trip or clear while a reading is missing.
+- **Missing readings, and why the daily sensor can be a day or two behind**:
+  the portal returns a row for every day from midnight onwards, but leaves its
+  `cons` null until your meter's reading for that day has been processed. That is
+  not a matter of hours. Measured on a real account at 17:15, both today and
+  yesterday were `cons: null` and the newest published figure was from two days
+  earlier; the six days before that were all populated. How far behind your
+  account runs is worth checking with `npm run probe`, which prints exactly this.
+
+  So `Water Usage Daily` shows **the most recent day the portal has published** —
+  today's figure when there is one, otherwise the newest completed day, looking
+  back up to a week. Which day that is appears in the debug log:
+
+  ```
+  Meter 61007: daily=140L (for 2026-08-18) week=911L (3 of 5 days from 2026-08-16) month=3477L forecast=5818L total=254.7m³
+  ```
+
+  That date is the thing to look at: it distinguishes a portal that is behind from
+  a sensor that is stuck. Nothing published within the last week is treated as no
+  data rather than passed off as current — the sensor holds its last value, since
+  a null is not the same as zero water used. On a brand-new install there is no
+  last value to hold, so the sensor reads `0.0001 lux` until the first figure
+  lands: HomeKit's floor for a light sensor, and the same value a genuine zero
+  reads as. If it is still sitting there after a poll or two, the debug log will
+  say whether the portal is returning nulls or the requests are failing.
+
+  Two consequences worth being clear about. The sensor's name is aspirational on
+  a lagging account — it is the latest daily total, not today's. And the daily
+  alert is a verdict on that day, so on a two-day lag it fires about a completed
+  day two days ago: a budget alarm, useless for catching a burst pipe now. The
+  alerts do not trip or clear at all while a figure is missing.
+- **This week**: `Water Usage This Week` is the **current calendar week to date**,
+  not a rolling seven days — it resets on the `weekStart` day (Sunday by default,
+  `monday` if that suits you better) the same way the monthly figure resets on the
+  first. It is the sum of the published days from the week's start day to today,
+  taken from the daily window the plugin already fetches, so switching it on costs
+  no extra requests. Two things follow from the publication lag. The total is
+  normally short whichever recent days the portal has not published — the debug
+  line above says `3 of 5 days`, which is what separates a genuinely light week
+  from an incomplete one — so treat it as a floor, not a total. And in the first
+  day or two of a new week the portal may have published nothing from it yet;
+  rather than show a zero week, the sensor and its alert hold last week's final
+  state until the first day of the new week lands.
 - **Forecast**: `Water Monthly Forecast` is the portal's own estimate of what the
   whole current calendar month will add up to, not a rolling 30-day figure — so
   it is directly comparable to `monthlyThreshold`, and early in the month it is a
@@ -200,7 +262,11 @@ below 15 minutes.
   `Retry-After` header wins over that ladder when the portal sends one, unless it
   asks for longer than a minute, in which case the poll gives up and the next one
   tries again. Retries are logged at debug level; you only see a warning if every
-  retry was throttled too.
+  retry was throttled too. A poll that is throttled even after its retries backs
+  off for 15 minutes before the next attempt, overriding the one-minute cold-start
+  retry: the portal limits logins per account, so a restart during a rate limit
+  would otherwise re-attempt a login every minute and hold open the very limit it
+  is waiting on. Nothing needs fixing when this happens — it clears on its own.
 - **Failures**: three consecutive failed polls set `StatusFault` and clear
   `StatusActive` on every service, so a real outage is visible rather than
   silently stale. A single failure is logged but leaves the readings alone: the
@@ -272,6 +338,21 @@ If a field looks wrong, or the portal changes shape, dump the raw responses:
 ```bash
 RYM_EMAIL=you@example.com RYM_PW='your-password' npm run probe
 ```
+
+The portal registers a device per `deviceId` and rate-limits logins per account,
+so the probe reuses one: it caches its own device id and session token in
+`.probe-state.json` (mode 0600, gitignored) and logs in only when that token has
+expired. If you are already rate-limited, or would rather not add a second
+session, point it at the running plugin's state file and it will borrow that
+session and not log in at all:
+
+```bash
+RYM_STATE_FILE=/var/lib/homebridge/.read-your-meter-pro.json npm run probe
+```
+
+That file is only ever read, never written. In Docker it is at the container's
+storage path — `/homebridge/.read-your-meter-pro.json` by default, reachable
+through the mounted volume.
 
 For verbose runtime logs, enable Homebridge's own debug mode (`homebridge -D`,
 or the debug toggle on this plugin's child bridge in the Homebridge UI). The
