@@ -29,10 +29,11 @@ show "0.734 m³" in the Home app. This plugin works around that:
     portal has actually published. See
     [Missing readings](#behaviour-worth-knowing).
 
-[^week]: The current calendar week to date, resetting on the start day set by
-    `weekStart` (Sunday by default), not a rolling seven days. It is summed from
-    the daily figures the plugin already fetches, so it costs no extra requests —
-    and it is missing whichever recent days the portal has not published yet.
+[^week]: Either the current calendar week to date — resetting on the day set by
+    `weeklyWindow`, Sunday by default — or the last 7 days rolling, if you set
+    `weeklyWindow` to `rolling`. Summed from the daily figures the plugin already
+    fetches, so it costs no extra requests, and missing whichever recent days the
+    portal has not published yet. See [This week](#behaviour-worth-knowing).
 
 Light sensors show up in the Home app as a number and the word `lux` — `734 lux`
 means 734 litres. Every sensor can be switched off individually, and every name
@@ -101,7 +102,7 @@ Use the Homebridge UI settings form, or add to `config.json`:
       "dailyThreshold": 800,
       "weeklyThreshold": 3500,
       "monthlyThreshold": 14000,
-      "weekStart": "sunday",
+      "weeklyWindow": "sunday",
       "exposeWeekly": true,
       "exposeForecast": true,
       "exposeTotal": false
@@ -119,7 +120,7 @@ Use the Homebridge UI settings form, or add to `config.json`:
 | `dailyThreshold` | `0` | In `unit`. `0` removes the daily alert sensor. |
 | `weeklyThreshold` | `0` | In `unit`. `0` removes the weekly alert sensor. |
 | `monthlyThreshold` | `0` | In `unit`. `0` removes the monthly alert sensor. |
-| `weekStart` | `sunday` | `sunday` or `monday`. Which day the weekly total resets on. |
+| `weeklyWindow` | `sunday` | `sunday`, `monday` or `rolling`. Calendar week from that day, or the last 7 days. |
 | `exposeDaily` | `true` | Latest published day's consumption. |
 | `exposeWeekly` | `false` | This week's consumption so far. |
 | `exposeMonthly` | `true` | This month's consumption. |
@@ -147,7 +148,10 @@ house, whether you have a garden, and what the season is. Two anchors:
   allocation is a sensible start — `875 × people` litres, so 3500 L for a family
   of four — which lands the alert late in a week that is heading over budget.
   Remember it only counts the days the portal has published, so a week that is
-  genuinely over may not show it until a day or two later.
+  genuinely over may not show it until a day or two later. If you want the alert
+  to mean the same thing every day of the week, set `weeklyWindow` to `rolling`
+  first: a calendar-week threshold can only trip late in the week, while a rolling
+  one is a steady "seven days' worth" line.
 
 Then correct with your own data: run for a week with Homebridge debug logging on
 and look at the `daily=` and `month=` lines, or read the same figures in the
@@ -224,18 +228,32 @@ below 15 minutes.
   alert is a verdict on that day, so on a two-day lag it fires about a completed
   day two days ago: a budget alarm, useless for catching a burst pipe now. The
   alerts do not trip or clear at all while a figure is missing.
-- **This week**: `Water Usage This Week` is the **current calendar week to date**,
-  not a rolling seven days — it resets on the `weekStart` day (Sunday by default,
-  `monday` if that suits you better) the same way the monthly figure resets on the
-  first. It is the sum of the published days from the week's start day to today,
-  taken from the daily window the plugin already fetches, so switching it on costs
-  no extra requests. Two things follow from the publication lag. The total is
-  normally short whichever recent days the portal has not published — the debug
-  line above says `3 of 5 days`, which is what separates a genuinely light week
-  from an incomplete one — so treat it as a floor, not a total. And in the first
-  day or two of a new week the portal may have published nothing from it yet;
-  rather than show a zero week, the sensor and its alert hold last week's final
-  state until the first day of the new week lands.
+- **This week**: `Water Usage This Week` sums whichever days of the week the
+  portal has published, out of the same window the daily figure comes from — so
+  switching it on costs no extra requests. `weeklyWindow` decides what "the week"
+  means, and the two options behave quite differently:
+
+  - `sunday` (default) or `monday` — the **current calendar week to date**. It
+    resets on that day the way the monthly figure resets on the first, so it
+    answers "how much this week", and a threshold on it is a weekly budget.
+  - `rolling` — the **last 7 days**, always ending today. It never resets, so it
+    is roughly steady from day to day and a threshold on it means the same thing
+    whenever it trips. It is not "this week": a heavy Sunday keeps counting until
+    it ages out the following Sunday, and there is no point at which the figure
+    starts from nothing.
+
+  Whichever you pick, the publication lag applies. The total is normally short
+  whichever recent days the portal has not published — the debug line above says
+  `3 of 5 days`, which is what separates a genuinely light week from an incomplete
+  one — so treat it as a floor, not a total, and read the start date in that line
+  to confirm which window is in force.
+
+  The lag bites hardest on a calendar week: in the first day or two of a new week
+  the portal may have published nothing from it yet. Rather than show a zero week,
+  the sensor and its alert hold last week's final state until the first day of the
+  new week lands — so around the reset the tile is briefly last week's number,
+  which is the same reason the daily sensor is not always today's. `rolling` avoids
+  that: a seven-day window almost always contains a published day.
 - **Forecast**: `Water Monthly Forecast` is the portal's own estimate of what the
   whole current calendar month will add up to, not a rolling 30-day figure — so
   it is directly comparable to `monthlyThreshold`, and early in the month it is a

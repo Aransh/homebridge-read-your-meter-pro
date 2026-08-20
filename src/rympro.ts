@@ -22,11 +22,15 @@ const REQUEST_TIMEOUT_MS = 30_000;
  * alongside it, so a stale one is identifiable rather than silently passed off as
  * current.
  *
- * Seven days is also the minimum that always spans the current week, which the
- * weekly figure sums out of this same window: the week's start day is at most six
- * days back. Shortening this would silently truncate the weekly total.
+ * Seven days is also the minimum that always spans the weekly window, which the
+ * weekly figure sums out of this same window: a calendar week starts at most six
+ * days back, and the rolling window is seven days including today. Shortening
+ * this would silently truncate the weekly total.
  */
 const DAILY_LOOKBACK_DAYS = 7;
+
+/** Length of the rolling weekly window, including today. */
+const ROLLING_WEEK_DAYS = 7;
 
 /**
  * Minimum gap between two outbound requests. The portal rate-limits bursts, and
@@ -66,13 +70,19 @@ export class RateLimitedError extends OperationError {
   }
 }
 
+/**
+ * What the weekly figure covers: the calendar week starting on the named day, or
+ * a rolling seven days ending today.
+ */
+export type WeeklyWindow = 'sunday' | 'monday' | 'rolling';
+
 export interface RymProClientOptions {
   /**
-   * Day the weekly total resets on, 0 for Sunday. The daily window already
-   * covers the current week, so the weekly figure is an aggregate of data
-   * already fetched rather than another request.
+   * What the weekly total covers; defaults to a Sunday-start calendar week. The
+   * daily window already spans either option, so the weekly figure is an
+   * aggregate of data already fetched rather than another request.
    */
-  weekStartsOn?: 0 | 1;
+  weeklyWindow?: WeeklyWindow;
   /** Receives a freshly issued token so it can be persisted. */
   onToken?: (token: string) => void;
   /** Retry diagnostics, wired to the Homebridge debug log. */
@@ -116,15 +126,15 @@ export interface MeterSnapshot {
    */
   dailyDate: string | null;
   /**
-   * Consumption so far in the current week, m³ — the published days from the
-   * week's start day onwards, summed. Null when the week has no published day
-   * yet, which is not the same thing as no water used.
+   * Consumption over the configured weekly window, m³ — its published days,
+   * summed. Null when the window has no published day yet, which is not the same
+   * thing as no water used.
    */
   weekly: number | null;
-  /** First day of the current week, YYYY-MM-DD. */
+  /** First day of the weekly window, YYYY-MM-DD. */
   weekStart: string;
   /**
-   * How many days of the current week `weekly` actually covers, and how many
+   * How many days of the weekly window `weekly` actually covers, and how many
    * have begun. `2 of 4` says the total is missing two days to the publication
    * lag, which is the difference between a low week and an incomplete one.
    */
@@ -140,7 +150,7 @@ export interface MeterSnapshot {
 
 export class RymProClient {
   private token: string | null = null;
-  private readonly weekStartsOn: 0 | 1;
+  private readonly weeklyWindow: WeeklyWindow;
   private readonly onToken?: (token: string) => void;
   private readonly onRetry?: (message: string) => void;
   private readonly signal?: AbortSignal;
@@ -157,7 +167,7 @@ export class RymProClient {
     private readonly deviceId: string,
     options: RymProClientOptions = {},
   ) {
-    this.weekStartsOn = options.weekStartsOn ?? 0;
+    this.weeklyWindow = options.weeklyWindow ?? 'sunday';
     this.onToken = options.onToken;
     this.onRetry = options.onRetry;
     this.signal = options.signal;
@@ -254,7 +264,7 @@ export class RymProClient {
       // One window request serves both the daily and the weekly figure.
       const published = await this.publishedDays(meterCount, today);
       const daily = published[0] ?? { value: null, date: null };
-      const week = this.currentWeek(published, today);
+      const week = this.weeklyTotal(published, today);
       const monthly = await this.monthlyConsumption(meterCount, today);
       const forecast = await this.forecast(meterCount);
 
@@ -302,20 +312,24 @@ export class RymProClient {
   }
 
   /**
-   * Consumption so far in the calendar week containing `today` — the current
-   * week, not a rolling seven days, so it resets on the week's start day the way
-   * the monthly figure resets on the first of the month.
+   * Consumption over the configured weekly window. By default that is the
+   * calendar week containing `today`, which resets on its start day the way the
+   * monthly figure resets on the first of the month; `rolling` instead covers the
+   * seven days ending today, which never resets and so is never nearly empty.
    *
    * The publication lag means the total is normally missing its most recent day
-   * or two, so the day counts come back with it. A week with nothing published
-   * yet is null rather than zero: for the first days of a week that is every
-   * day of it.
+   * or two, so the day counts come back with it. A window with nothing published
+   * yet is null rather than zero: in the first days of a calendar week that is
+   * every day of it.
    */
-  private currentWeek(
+  private weeklyTotal(
     published: Array<{ value: number; date: string }>,
     today: string,
   ): { value: number | null; start: string; counted: number; elapsed: number } {
-    const start = weekStart(today, this.weekStartsOn);
+    const start =
+      this.weeklyWindow === 'rolling'
+        ? shiftDays(today, -(ROLLING_WEEK_DAYS - 1))
+        : weekStart(today, this.weeklyWindow === 'monday' ? 1 : 0);
     const inWeek = published.filter((day) => day.date >= start && day.date <= today);
     const elapsed = daysBetween(start, today) + 1;
 

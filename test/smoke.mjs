@@ -293,7 +293,7 @@ const platform = new api._ctor(
     exposeForecast: true,
     exposeTotal: true,
     exposeWeekly: true,
-    weekStart: 'sunday',
+    weeklyWindow: 'sunday',
     pollInterval: 60,
   },
   api,
@@ -468,7 +468,62 @@ console.log('✓ accessory information uses the physical meter serial');
   await platform.poll();
 }
 
-// 2e. A poll must trickle its requests rather than burst them: the portal
+// 2e. `weeklyWindow: rolling` covers the seven days ending today instead of the
+// calendar week, so the total does not depend on the weekday and does not reset.
+{
+  dailyPublished = { 0: 0.1, 1: 0.2, 2: 0.3, 3: 0.4, 4: 0.5, 5: 0.6, 6: 0.7, 7: 9.9 };
+  const rolling = new api._ctor(
+    log,
+    {
+      platform: 'ReadYourMeterPro',
+      email: 'aran@example.com',
+      password: 'correct-horse',
+      unit: 'liters',
+      dailyThreshold: 500,
+      weeklyThreshold: 1500,
+      monthlyThreshold: 20000,
+      exposeForecast: true,
+      exposeTotal: true,
+      exposeWeekly: true,
+      weeklyWindow: 'rolling',
+    },
+    api,
+  );
+  rolling.configureAccessory(registered[0]);
+  await launch();
+
+  // Offsets 0..6 are the window; the 9.9 m³ at offset 7 is the eighth day back
+  // and stays out of it, so a wrong boundary here is unmissable.
+  assertLitres(lux('Water Usage This Week'), 2800, 'the seven days ending today');
+  assert.equal(leak('Water Weekly Alert'), 1, '2800 L is over the 1500 L threshold');
+  console.log('✓ the rolling window sums the last 7 days, whatever the weekday');
+
+  // The Homebridge UI writes an empty value for a dropdown left alone, and the
+  // config can be hand-edited to anything at all; both mean the default week.
+  for (const value of ['', undefined, 'nonsense']) {
+    const other = new api._ctor(
+      log,
+      {
+        platform: 'ReadYourMeterPro',
+        email: 'aran@example.com',
+        password: 'correct-horse',
+        weeklyWindow: value,
+      },
+      api,
+    );
+    assert.equal(
+      other.settings.weeklyWindow,
+      'sunday',
+      `weeklyWindow: ${JSON.stringify(value)} must fall back to the Sunday calendar week`,
+    );
+  }
+  console.log('✓ an unset or unrecognised weeklyWindow falls back to the Sunday week');
+
+  dailyPublished = { 0: 0.734, 1: 0.512, 2: 0.498, 3: 0.501 };
+  await platform.poll();
+}
+
+// 2f. A poll must trickle its requests rather than burst them: the portal
 // rate-limits bursts, and a 429 on the first request costs the whole poll.
 {
   resetRequestStats();

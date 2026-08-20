@@ -15,8 +15,12 @@ export const LUX_MAX = 100000;
 
 export type VolumeUnit = 'liters' | 'cubic_meters';
 
-/** Day the weekly total resets on. Sunday in Israel, where these meters are. */
-export type WeekStart = 'sunday' | 'monday';
+/**
+ * What the weekly total covers: a calendar week resetting on the named day —
+ * Sunday in Israel, where these meters are — or a rolling seven days, which
+ * never resets and so is never nearly empty.
+ */
+export type WeeklyWindow = 'sunday' | 'monday' | 'rolling';
 
 /** One sensor. Doubles as the HAP service subtype, so these strings are stable. */
 export type SensorKey =
@@ -71,8 +75,8 @@ export interface RymProPlatformConfig extends PlatformConfig {
   weeklyThreshold?: number;
   /** Threshold in `unit` above which the monthly leak sensor trips. 0 disables it. */
   monthlyThreshold?: number;
-  /** Day the weekly total resets on. Defaults to Sunday. */
-  weekStart?: WeekStart;
+  /** What the weekly total covers. Defaults to a Sunday-start calendar week. */
+  weeklyWindow?: WeeklyWindow;
   exposeDaily?: boolean;
   exposeWeekly?: boolean;
   exposeMonthly?: boolean;
@@ -97,7 +101,7 @@ export interface ResolvedConfig {
   dailyThreshold: number;
   weeklyThreshold: number;
   monthlyThreshold: number;
-  weekStart: WeekStart;
+  weeklyWindow: WeeklyWindow;
   /** Which sensors to expose. Absent keys are removed from the accessory. */
   expose: Record<SensorKey, boolean>;
   /**
@@ -142,7 +146,12 @@ export function resolveConfig(
   const dailyThreshold = nonNegative(config.dailyThreshold);
   const weeklyThreshold = nonNegative(config.weeklyThreshold);
   const monthlyThreshold = nonNegative(config.monthlyThreshold);
-  const weekStart: WeekStart = config.weekStart === 'monday' ? 'monday' : 'sunday';
+  // Anything unrecognised — including the empty value the Homebridge UI writes
+  // when the dropdown is left alone — is the Sunday calendar week.
+  const weeklyWindow: WeeklyWindow =
+    config.weeklyWindow === 'monday' || config.weeklyWindow === 'rolling'
+      ? config.weeklyWindow
+      : 'sunday';
 
   const expose: Record<SensorKey, boolean> = {
     daily: config.exposeDaily !== false,
@@ -174,7 +183,7 @@ export function resolveConfig(
     dailyThreshold,
     weeklyThreshold,
     monthlyThreshold,
-    weekStart,
+    weeklyWindow,
     expose,
     nameOverrides: {
       daily: validName(config.nameDaily, 'nameDaily', log),

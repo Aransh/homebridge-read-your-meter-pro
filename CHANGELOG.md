@@ -11,6 +11,31 @@ headings in the `## [x.y.z] - YYYY-MM-DD` form.
 
 ## [Unreleased]
 
+## [1.0.0-beta.5] - 2026-08-20
+
+### Added
+
+- `weeklyWindow: rolling` makes the weekly sensor and its alert cover the **last
+  7 days** — always the seven days ending today — instead of the calendar week.
+  It never resets, so it reads roughly steady from day to day and a threshold on
+  it means the same thing whenever it trips, where a calendar-week threshold can
+  only trip late in the week. It is correspondingly not "this week": a heavy day
+  keeps counting until it ages out a week later. Still summed from the daily
+  window already fetched, so it adds no requests.
+
+### Changed
+
+- **`weekStart` is now `weeklyWindow`.** The setting took `sunday` or `monday`,
+  and `rolling` is not a day, so "week starts on" no longer described it. A
+  `weekStart` left in `config.json` is ignored and the weekly figure falls back
+  to the Sunday calendar week — rename the key to keep a `monday` week.
+- The setting is required in the settings form, so the dropdown no longer offers
+  the Homebridge UI's blank "None" entry. It never meant anything: leaving it
+  selected wrote no value and the weekly figure fell back to the Sunday week.
+  Anything unrecognised in `config.json` still falls back the same way.
+- The weekly documentation now covers both windows and when to prefer each,
+  rather than only the calendar week.
+
 ## [1.0.0-beta.4] - 2026-08-20
 
 ### Added
@@ -173,7 +198,8 @@ First public prerelease.
   check that fails if the published tarball loses `dist/` or
   `config.schema.json`.
 
-[Unreleased]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.4...HEAD
+[Unreleased]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.5...HEAD
+[1.0.0-beta.5]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.4...v1.0.0-beta.5
 [1.0.0-beta.4]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.3...v1.0.0-beta.4
 [1.0.0-beta.3]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.2...v1.0.0-beta.3
 [1.0.0-beta.2]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.1...v1.0.0-beta.2
