@@ -11,6 +11,16 @@ headings in the `## [x.y.z] - YYYY-MM-DD` form.
 
 ## [Unreleased]
 
+## [1.0.0-beta.6] - 2026-08-21
+
+### Changed
+
+- Default poll interval increased from 60 to 90 minutes to avoid API rate
+  limiting. The portal can return `HTTP 429` under sustained polling, and the
+  90-minute default provides better headroom while the meter itself only updates
+  hourly anyway. Existing configurations are unaffected; only new installs or
+  configs that rely on the default will see the change.
+
 ## [1.0.0-beta.5] - 2026-08-20
 
 ### Added
@@ -198,7 +208,8 @@ First public prerelease.
   check that fails if the published tarball loses `dist/` or
   `config.schema.json`.
 
-[Unreleased]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.5...HEAD
+[Unreleased]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.6...HEAD
+[1.0.0-beta.6]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.5...v1.0.0-beta.6
 [1.0.0-beta.5]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.4...v1.0.0-beta.5
 [1.0.0-beta.4]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.3...v1.0.0-beta.4
 [1.0.0-beta.3]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.2...v1.0.0-beta.3
