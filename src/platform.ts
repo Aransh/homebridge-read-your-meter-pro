@@ -14,6 +14,7 @@ import type {
 import { MeterAccessory } from './meterAccessory.js';
 import {
   CannotConnectError,
+  InvalidCredentialsError,
   RateLimitedError,
   RymProClient,
   UnauthorizedError,
@@ -164,9 +165,12 @@ export class RymProPlatform implements DynamicPlatformPlugin {
       this.adoptCachedAccessories();
       this.consecutiveFailures += 1;
 
-      if (error instanceof UnauthorizedError) {
-        // Credentials themselves are rejected. Retrying on a timer just locks
-        // the account out, so stop and tell the user to fix the config.
+      if (error instanceof InvalidCredentialsError) {
+        // The email/password pair itself is rejected. Retrying on a timer just
+        // locks the account out, so stop and tell the user to fix the config.
+        // Only this case stops: a 401 from a data endpoint (a bare
+        // UnauthorizedError) survives a good login and falls through to the
+        // ordinary retry path below.
         this.markFaulted();
         this.log.error(
           `Authentication rejected by Read Your Meter Pro (${message(error)}). ` +
@@ -186,7 +190,15 @@ export class RymProPlatform implements DynamicPlatformPlugin {
         this.markFaulted();
       }
 
-      const kind = error instanceof CannotConnectError ? 'Could not reach' : 'Error talking to';
+      let kind = 'Error talking to';
+      if (error instanceof CannotConnectError) {
+        kind = 'Could not reach';
+      } else if (error instanceof UnauthorizedError) {
+        // A 401 that a fresh login did not clear. Almost always one flaky
+        // endpoint rather than anything the user can fix, so it must not be
+        // reported as a credentials problem.
+        kind = 'Request rejected by';
+      }
       const held = persistent
         ? ''
         : ` Holding the last known readings (failure ${this.consecutiveFailures} of ${FAULT_AFTER_FAILURES}).`;
@@ -222,7 +234,14 @@ export class RymProPlatform implements DynamicPlatformPlugin {
       this.rateLimited = false;
     }
     this.timer = setTimeout(() => {
-      void this.poll();
+      // poll() handles its own request failures, but the recovery work in its
+      // catch block (adopting cached accessories, faulting them, persisting) can
+      // throw on its own — a HAP rejection, say. Nothing awaits this call, so an
+      // escaping rejection would surface as an unhandled rejection at the
+      // Homebridge level, which the verified criteria rule out.
+      this.poll().catch((error) => {
+        this.log.error(`Poll failed: ${message(error)}`);
+      });
     }, delay);
     this.timer.unref?.();
   }

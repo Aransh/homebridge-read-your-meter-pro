@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest a sensor, setting, or behaviour change.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: >-
+        The automation or view you are after, rather than the implementation —
+        HomeKit's sensor types are limiting enough that the shape of the answer
+        is usually not obvious.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you have in mind
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What you tried instead
+      description: Existing settings, a Shortcuts automation, another plugin.
+    validations:
+      required: false
