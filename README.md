@@ -1,9 +1,30 @@
+<p align="center">
+  <img
+    src="https://raw.githubusercontent.com/Aransh/homebridge-read-your-meter-pro/main/icons/icon-512.png"
+    alt="homebridge-read-your-meter-pro"
+    width="130"
+    height="130">
+  &nbsp;&nbsp;&nbsp;
+  <a href="https://homebridge.io"><img
+    src="https://raw.githubusercontent.com/homebridge/branding/latest/logos/homebridge-color-round-stylized.png"
+    alt="Homebridge"
+    width="130"
+    height="130"></a>
+</p>
+
 # homebridge-read-your-meter-pro
+
+[![npm](https://img.shields.io/npm/v/homebridge-read-your-meter-pro?logo=npm&logoColor=white&label=npm)](https://www.npmjs.com/package/homebridge-read-your-meter-pro)
+[![homebridge](https://img.shields.io/badge/homebridge-v1%20%7C%20v2-491F59?logo=homebridge&logoColor=white)](https://homebridge.io)
+[![node](https://img.shields.io/node/v/homebridge-read-your-meter-pro?logo=nodedotjs&logoColor=white&label=node)](https://nodejs.org)
+[![build](https://img.shields.io/github/actions/workflow/status/Aransh/homebridge-read-your-meter-pro/build.yml?branch=main&logo=github&label=build)](https://github.com/Aransh/homebridge-read-your-meter-pro/actions/workflows/build.yml)
+[![license](https://img.shields.io/npm/l/homebridge-read-your-meter-pro?color=blue&label=license)](LICENSE)
 
 Exposes water consumption from the Israeli [Read Your Meter Pro](https://rym-pro.com)
 portal (ARAD meters) in HomeKit.
 
-Unofficial, and not affiliated with Arad Group or any water corporation.
+Unofficial, and not affiliated with Arad Group, any water corporation, Homebridge
+or Apple.
 
 ## Read this before installing
 
