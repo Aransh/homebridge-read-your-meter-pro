@@ -31,10 +31,10 @@
       "pollInterval": {
         "title": "Poll interval (minutes)",
         "type": "integer",
-        "default": 60,
+        "default": 90,
         "minimum": 15,
         "maximum": 1440,
-        "description": "The meter itself only reports hourly at best, so there is nothing to gain below 60."
+        "description": "The meter itself only reports hourly at best, so there is nothing to gain below 60. The default of 90 minutes helps avoid API rate limiting."
       },
       "unit": {
         "title": "Unit",
