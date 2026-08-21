@@ -6,24 +6,27 @@
   "footerDisplay": "For verbose logs, enable Homebridge debug mode (or the debug toggle on this plugin's child bridge). Unofficial; not affiliated with Arad Group or any water corporation.",
   "schema": {
     "type": "object",
+    "required": [
+      "name",
+      "email",
+      "password",
+      "weeklyWindow"
+    ],
     "properties": {
       "name": {
         "title": "Name",
         "type": "string",
-        "default": "Read Your Meter Pro",
-        "required": true
+        "default": "Read Your Meter Pro"
       },
       "email": {
         "title": "Email",
         "type": "string",
         "format": "email",
-        "required": true,
         "description": "The email address you use to sign in at rym-pro.com."
       },
       "password": {
         "title": "Password",
         "type": "string",
-        "required": true,
         "x-schema-form": {
           "type": "password"
         }
@@ -60,7 +63,6 @@
         "title": "Weekly total covers",
         "type": "string",
         "default": "sunday",
-        "required": true,
         "oneOf": [
           {
             "title": "This calendar week, from Sunday",
