@@ -3,20 +3,58 @@
  * minimal Homebridge API shim built on the real HAP-NodeJS classes.
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-
-import { PlatformAccessory } from '../node_modules/homebridge/dist/platformAccessory.js';
-import { Characteristic, Service, uuid } from '@homebridge/hap-nodejs';
+import { dirname, join } from 'node:path';
 
 import plugin from '../dist/index.js';
+
+/**
+ * HAP-NodeJS comes from whichever Homebridge is installed: 2.x renamed the
+ * package to `@homebridge/hap-nodejs`, 1.x still ships `hap-nodejs`. Read off
+ * Homebridge's own manifest rather than guessed, so the CI leg that installs
+ * `homebridge@1` really does drive the classes that install would hand the
+ * plugin — otherwise the `^1.8.0` half of `engines.homebridge` is a claim
+ * nothing checks.
+ *
+ * Both files are reached by path rather than by specifier: neither package
+ * exports its own `package.json`, and the build directory is not an export
+ * either. Its name is taken from `main`, since 1.x builds to `lib/` and 2.x to
+ * `dist/`.
+ */
+const manifest = (name) =>
+  JSON.parse(readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url), 'utf8'));
+
+const homebridgePkg = manifest('homebridge');
+const HAP_PACKAGE = homebridgePkg.dependencies['@homebridge/hap-nodejs']
+  ? '@homebridge/hap-nodejs'
+  : 'hap-nodejs';
+const homebridgeBuildDir = dirname(homebridgePkg.main);
+
+const { Characteristic, Service, uuid } = await import(HAP_PACKAGE);
+const { PlatformAccessory } = await import(
+  new URL(
+    `../node_modules/homebridge/${homebridgeBuildDir}/platformAccessory.js`,
+    import.meta.url,
+  )
+);
+
+console.log(
+  `Testing against homebridge ${homebridgePkg.version} ` +
+    `(${HAP_PACKAGE} ${manifest(HAP_PACKAGE).version})`,
+);
 
 // ---------------------------------------------------------------- fake server
 
 const calls = [];
 let loginCount = 0;
 let expireNextGet = false;
+/**
+ * 401s every data request, including the one after a successful re-login. Models
+ * a portal-side 401 that has nothing to do with the credentials, which must not
+ * be mistaken for a rejected password.
+ */
+let expireEveryGet = false;
 
 const METER_ID = 55123;
 const METER_SERIAL = '000811515025';
@@ -101,7 +139,7 @@ const apiFetch = async (url, init = {}) => {
     return json({ token: `token-${loginCount}` });
   }
 
-  if (expireNextGet) {
+  if (expireNextGet || expireEveryGet) {
     expireNextGet = false;
     return new Response('', { status: 401 });
   }
@@ -787,6 +825,42 @@ console.log('✓ accessory information uses the physical meter serial');
   assert.equal(bad.timer, null, 'no retry timer armed');
   activeStoragePath = storagePath;
   console.log('✓ rejected credentials stop the loop with a clear error');
+}
+
+// 7a. A 401 that a fresh login does not clear is a portal problem, not a
+// credentials problem: it must fault the sensors but keep polling. Stopping here
+// would kill the plugin until the next Homebridge restart over one flaky
+// endpoint.
+{
+  activeStoragePath = mkdtempSync(join(tmpdir(), 'hb-rympro-401-'));
+  const errorsBefore = logs.length;
+  expireEveryGet = true;
+  const stuck = new api._ctor(
+    log,
+    { platform: 'ReadYourMeterPro', email: 'aran@example.com', password: 'correct-horse' },
+    api,
+  );
+  await launch();
+  expireEveryGet = false;
+
+  const since = logs.slice(errorsBefore);
+  assert.ok(
+    !since.some(([lvl, m]) => lvl === 'error' && m.includes('Polling stopped')),
+    'a data-endpoint 401 must not be reported as rejected credentials',
+  );
+  assert.ok(
+    !since.some(([, m]) => /check your email and password/.test(m)),
+    'the advice to fix the config would be misleading here',
+  );
+  assert.ok(
+    since.some(([lvl, m]) => lvl === 'warn' && /Request rejected by/.test(m)),
+    'the 401 should be logged as a request failure',
+  );
+  assert.ok(stuck.timer, 'polling must continue so it recovers on its own');
+  stuck.timer.close?.();
+  clearTimeout(stuck.timer);
+  activeStoragePath = storagePath;
+  console.log('✓ a persistent data-endpoint 401 faults but keeps polling');
 }
 
 // 7b. A rename in the Home app survives a restart.

@@ -9,7 +9,37 @@ Each released version has a matching `vX.Y.Z` git tag; the release workflow uses
 the section below the matching heading as the GitHub release notes, so keep the
 headings in the `## [x.y.z] - YYYY-MM-DD` form.
 
-## [Unreleased]
+## [1.0.0] - 2026-08-21
+
+First stable release. Everything in the `1.0.0-beta.*` series below is included;
+this section covers only what changed since `1.0.0-beta.6`.
+
+### Fixed
+
+- A `401` from a data endpoint no longer stops the plugin for good. It shared an
+  error type with a rejected email/password, so a single stray `401` that
+  survived a fresh login was reported as "check your email and password" and
+  killed the poll loop until Homebridge was restarted. Rejected credentials still
+  stop polling — retrying those on a timer only risks an account lockout — but
+  anything else now faults the sensors and keeps polling, so it recovers on its
+  own.
+- The timer-driven poll no longer risks an unhandled rejection. Request failures
+  were already caught, but the recovery work in the handler could in principle
+  throw on its own with nothing attached to catch it.
+
+### Changed
+
+- CI now also runs the full smoke suite against `homebridge@1`. `engines`
+  advertises `^1.8.0 || ^2.0.0` but only 2.x was ever exercised, so the 1.x half
+  was an unverified claim — Homebridge 1.11 still supports Node 22 and 24, so it
+  is a configuration this plugin can genuinely land in. It passes.
+
+### Documentation
+
+- README caught up with the 90-minute default poll interval, which still said 60
+  in the options table and the example config.
+- Added GitHub issue templates that collect the Homebridge, Node and plugin
+  versions up front.
 
 ## [1.0.0-beta.6] - 2026-08-21
 

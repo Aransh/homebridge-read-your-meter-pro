@@ -26,6 +26,19 @@ jobs:
       - run: npm ci
       - run: npm test # lint + build + smoke tests
 
+  homebridge-1:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save homebridge@^1.8.0
+      - run: npm run build
+      - run: node test/smoke.mjs
+
   # Catches the case where `files` in package.json drifts and the published
   # tarball is missing dist/ or config.schema.json.
   pack:

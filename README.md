@@ -98,7 +98,7 @@ Use the Homebridge UI settings form, or add to `config.json`:
       "email": "you@example.com",
       "password": "your-portal-password",
       "unit": "liters",
-      "pollInterval": 60,
+      "pollInterval": 90,
       "dailyThreshold": 800,
       "weeklyThreshold": 3500,
       "monthlyThreshold": 14000,
@@ -116,7 +116,7 @@ Use the Homebridge UI settings form, or add to `config.json`:
 | `email` | — | Required. |
 | `password` | — | Required. |
 | `unit` | `liters` | `liters` or `cubic_meters`. Applies to daily/weekly/monthly/forecast. |
-| `pollInterval` | `60` | Minutes. Floored at 15. |
+| `pollInterval` | `90` | Minutes. Floored at 15. Shorter intervals risk the portal's rate limit. |
 | `dailyThreshold` | `0` | In `unit`. `0` removes the daily alert sensor. |
 | `weeklyThreshold` | `0` | In `unit`. `0` removes the weekly alert sensor. |
 | `monthlyThreshold` | `0` | In `unit`. `0` removes the monthly alert sensor. |
@@ -193,7 +193,8 @@ litres blows past the 100000 ceiling, so it is always reported in m³.
 ### Poll politely
 
 The meter uploads at most hourly, often daily. Polling every minute gains you
-nothing and hammers someone else's infrastructure. The plugin refuses intervals
+nothing and hammers someone else's infrastructure. The default is 90 minutes,
+which stays clear of the portal's rate limit, and the plugin refuses intervals
 below 15 minutes.
 
 ## Behaviour worth knowing
@@ -262,8 +263,11 @@ below 15 minutes.
 - **Names**: a rename in the Home app is stored in Homebridge's accessory cache
   and survives restarts. See [Naming](#naming) for the config.json override.
 - **Auth**: the plugin logs in once, caches the bearer token, and re-authenticates
-  silently on a 401. If the portal rejects your credentials outright it stops
-  polling and logs an error rather than retrying on a timer and risking a lockout.
+  silently on a 401. If the portal rejects your email and password outright it
+  stops polling and logs an error rather than retrying on a timer and risking a
+  lockout. A 401 that a fresh login does not clear is treated as an ordinary
+  endpoint failure instead — it faults the sensors but keeps polling, because
+  that is a portal problem and not something you can fix in the config.
 - **Credentials**: your email and password live in `config.json`, like every
   other Homebridge plugin. They are never written anywhere else and never logged.
 - **State**: a generated `deviceId` and the cached session token live in
@@ -309,7 +313,10 @@ npm test        # lint + build + smoke tests against a mocked portal
 
 The smoke tests need no credentials and touch no network: they stub `fetch` with
 a fake portal and drive the plugin through Homebridge's real `PlatformAccessory`
-and HAP-NodeJS `Service`/`Characteristic` classes. CI runs them on Node 22 and 24.
+and HAP-NodeJS `Service`/`Characteristic` classes. CI runs them on Node 22 and
+24, and once more against `homebridge@1` — the suite picks up whichever
+HAP-NodeJS the installed Homebridge brings, so the `^1.8.0` half of
+`engines.homebridge` is checked rather than assumed.
 
 ### Releasing
 

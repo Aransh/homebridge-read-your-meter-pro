@@ -57,6 +57,17 @@ export class UnauthorizedError extends Error {}
 export class OperationError extends Error {}
 
 /**
+ * The portal rejected the email/password pair itself — login error 5060.
+ *
+ * Deliberately distinct from a bare `UnauthorizedError`, which is a 401 from a
+ * data endpoint and can happen with a token minted seconds earlier by a
+ * successful login. The two need opposite responses: a rejected password must
+ * stop the poll loop, because retrying it on a timer only pins the account
+ * against the portal's login limit, while a stray 401 is worth another poll.
+ */
+export class InvalidCredentialsError extends UnauthorizedError {}
+
+/**
  * HTTP 429. Subclasses OperationError so callers that only care that a request
  * failed need no changes.
  */
@@ -189,7 +200,7 @@ export class RymProClient {
     const errorMessage = (json.error as string | undefined) ?? 'unknown error';
 
     if (errorCode === 5060) {
-      throw new UnauthorizedError(errorMessage);
+      throw new InvalidCredentialsError(errorMessage);
     }
     if (!token || errorCode) {
       throw new CannotConnectError(`code: ${errorCode}, error: ${errorMessage}`);

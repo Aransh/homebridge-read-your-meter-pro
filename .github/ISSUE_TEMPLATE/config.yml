@@ -1,0 +1,13 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Homebridge Discord
+    url: https://discord.gg/kqNCe2D
+    about: >-
+      General Homebridge help — setup, HomeKit pairing, or anything not specific
+      to this plugin.
+  - name: Read Your Meter Pro portal itself
+    url: https://rym-pro.com/
+    about: >-
+      Missing or wrong readings in the portal's own app come from your water
+      utility, not from this plugin. Check the portal first — this plugin can
+      only show what the portal publishes.
