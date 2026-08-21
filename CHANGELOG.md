@@ -9,6 +9,17 @@ Each released version has a matching `vX.Y.Z` git tag; the release workflow uses
 the section below the matching heading as the GitHub release notes, so keep the
 headings in the `## [x.y.z] - YYYY-MM-DD` form.
 
+## [1.0.1] - 2026-08-22
+
+### Fixed
+
+- `config.schema.json` is valid JSON Schema again. Four properties carried
+  `"required": true`, which is not a thing in JSON Schema — `required` is an
+  array of property names on the enclosing object. The Homebridge UI happens to
+  honour the boolean form, so the form behaves the same either way, but the
+  plugin-verification checks rejected the schema. `name`, `email`, `password`
+  and `weeklyWindow` are now listed in a `required` array on the schema object.
+
 ## [1.0.0] - 2026-08-21
 
 First stable release. Everything in the `1.0.0-beta.*` series below is included;
@@ -238,7 +249,9 @@ First public prerelease.
   check that fails if the published tarball loses `dist/` or
   `config.schema.json`.
 
-[Unreleased]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.6...HEAD
+[Unreleased]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0...v1.0.1
+[1.0.0]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.6...v1.0.0
 [1.0.0-beta.6]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.5...v1.0.0-beta.6
 [1.0.0-beta.5]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.4...v1.0.0-beta.5
 [1.0.0-beta.4]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.3...v1.0.0-beta.4
