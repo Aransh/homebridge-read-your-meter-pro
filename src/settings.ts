@@ -112,7 +112,7 @@ export interface ResolvedConfig {
 }
 
 export const MIN_POLL_MINUTES = 15;
-export const DEFAULT_POLL_MINUTES = 60;
+export const DEFAULT_POLL_MINUTES = 90;
 
 type Log = { error: (msg: string) => void; warn: (msg: string) => void };
 

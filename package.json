@@ -1,7 +1,7 @@
 {
   "name": "homebridge-read-your-meter-pro",
   "displayName": "Read Your Meter Pro",
-  "version": "1.0.0-beta.5",
+  "version": "1.0.0-beta.6",
   "description": "Homebridge plugin exposing Israeli water meter data from the Read Your Meter Pro portal as HomeKit light sensors and leak sensors.",
   "license": "MIT",
   "author": "Aran Shavit",
