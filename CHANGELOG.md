@@ -9,6 +9,17 @@ Each released version has a matching `vX.Y.Z` git tag; the release workflow uses
 the section below the matching heading as the GitHub release notes, so keep the
 headings in the `## [x.y.z] - YYYY-MM-DD` form.
 
+## [Unreleased]
+
+## [1.0.3] - 2026-08-22
+
+### Added
+
+- [GitHub Sponsors](https://github.com/sponsors/Aransh) link added alongside the
+  existing PayPal donation link in `package.json`, README, and FUNDING.yml. Both
+  options now appear in the Homebridge UI donate button and the repository
+  sponsor interface.
+
 ## [1.0.2] - 2026-08-22
 
 ### Added
@@ -263,7 +274,8 @@ First public prerelease.
   check that fails if the published tarball loses `dist/` or
   `config.schema.json`.
 
-[Unreleased]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.3...HEAD
+[1.0.3]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.2...v1.0.3
 [1.0.2]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/Aransh/homebridge-read-your-meter-pro/compare/v1.0.0-beta.6...v1.0.0
