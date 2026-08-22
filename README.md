@@ -14,6 +14,7 @@
 
 # homebridge-read-your-meter-pro
 
+[![verified-by-homebridge](https://img.shields.io/badge/homebridge-verified-blueviolet?color=%23491F59&style=flat&logoColor=%23FFFFFF&logo=homebridge)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 [![npm](https://img.shields.io/npm/v/homebridge-read-your-meter-pro?logo=npm&logoColor=white&label=npm)](https://www.npmjs.com/package/homebridge-read-your-meter-pro)
 [![homebridge](https://img.shields.io/badge/homebridge-v1%20%7C%20v2-491F59?logo=homebridge&logoColor=white)](https://homebridge.io)
 [![node](https://img.shields.io/node/v/homebridge-read-your-meter-pro?logo=nodedotjs&logoColor=white&label=node)](https://nodejs.org)
@@ -408,6 +409,13 @@ This prints a **redacted** summary of every endpoint the plugin uses — safe to
 paste into an issue — and writes the full unredacted response to
 `probe-output.json` (mode 0600, gitignored) for your own inspection. Delete that
 file when you are done.
+
+## Support
+
+If this plugin is useful to you, you can
+[buy me a coffee via PayPal](https://paypal.me/AranShavit). Entirely optional —
+the plugin is MIT and stays that way. Bug reports and pull requests are worth
+more.
 
 ## Credits
 

@@ -9,6 +9,20 @@ Each released version has a matching `vX.Y.Z` git tag; the release workflow uses
 the section below the matching heading as the GitHub release notes, so keep the
 headings in the `## [x.y.z] - YYYY-MM-DD` form.
 
+## [Unreleased]
+
+### Added
+
+- A `funding` field in `package.json` pointing at PayPal, which puts a *Donate*
+  button on the plugin's tile in the Homebridge UI. Only takes effect once
+  published to NPM.
+
+### Documentation
+
+- Added the *Verified by Homebridge* badge and a Support section to the README.
+  The plugin was verified on 2026-08-22
+  ([homebridge/plugins#1176](https://github.com/homebridge/plugins/issues/1176)).
+
 ## [1.0.1] - 2026-08-22
 
 ### Fixed
