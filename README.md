@@ -412,10 +412,10 @@ file when you are done.
 
 ## Support
 
-If this plugin is useful to you, you can
-[buy me a coffee via PayPal](https://paypal.me/AranShavit). Entirely optional —
-the plugin is MIT and stays that way. Bug reports and pull requests are worth
-more.
+If this plugin is useful to you, you can support it via
+[GitHub Sponsors](https://github.com/sponsors/Aransh) or
+[PayPal](https://paypal.me/AranShavit). Entirely optional — the plugin is MIT
+and stays that way. Bug reports and pull requests are worth more.
 
 ## Credits
 
