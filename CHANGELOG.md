@@ -11,6 +11,31 @@ headings in the `## [x.y.z] - YYYY-MM-DD` form.
 
 ## [Unreleased]
 
+Development and test changes only. Nothing here alters the published plugin, so
+these notes can ride along with whatever the next release turns out to be rather
+than warranting one of their own.
+
+### Fixed
+
+- `package-lock.json` said `1.0.2` while `package.json` said `1.0.3`. The `1.0.3`
+  bump edited `package.json` by hand instead of going through `npm version`, so
+  the lock never caught up, and nothing complained: `npm ci` validates the
+  dependency graph but not the root `version` field, and the lockfile is not part
+  of the published tarball. Regenerated, so both now agree.
+
+### Changed
+
+- Dropped the `@homebridge/hap-nodejs` devDependency. The smoke test never wanted
+  its own HAP — it wants the one Homebridge is running — and having both meant
+  npm could resolve two copies at once. Homebridge pins HAP exactly, so a
+  Renovate bump to the direct dependency left Homebridge on a nested older copy
+  while the test loaded the newer one, built services from it, and handed them to
+  a `PlatformAccessory` backed by the other. Nothing failed, but the seam is one
+  where `instanceof` is false in both directions, and the test banner reported a
+  version that was not really under test. HAP is now resolved from Homebridge's
+  own location, so it is the same copy by construction on both the `homebridge@1`
+  and `homebridge@2` CI legs.
+
 ## [1.0.3] - 2026-08-22
 
 ### Added
