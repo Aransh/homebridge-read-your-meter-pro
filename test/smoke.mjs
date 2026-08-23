@@ -4,8 +4,10 @@
  */
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import plugin from '../dist/index.js';
 
@@ -17,10 +19,19 @@ import plugin from '../dist/index.js';
  * plugin — otherwise the `^1.8.0` half of `engines.homebridge` is a claim
  * nothing checks.
  *
- * Both files are reached by path rather than by specifier: neither package
- * exports its own `package.json`, and the build directory is not an export
+ * Homebridge's own files are reached by path rather than by specifier: it does
+ * not export its `package.json`, and the build directory is not an export
  * either. Its name is taken from `main`, since 1.x builds to `lib/` and 2.x to
  * `dist/`.
+ *
+ * HAP is resolved from Homebridge's location rather than this file's, so it is
+ * necessarily the same copy Homebridge itself loads. A bare specifier here
+ * would resolve to whatever npm happened to hoist, and the two can differ:
+ * Homebridge pins HAP exactly, so anything else in the tree asking for a newer
+ * one leaves Homebridge with a nested copy. The test would then build services
+ * from one copy and hand them to a `PlatformAccessory` backed by another, where
+ * every `instanceof` across the seam is false — while still printing the
+ * version it is not really testing.
  */
 const manifest = (name) =>
   JSON.parse(readFileSync(new URL(`../node_modules/${name}/package.json`, import.meta.url), 'utf8'));
@@ -31,7 +42,14 @@ const HAP_PACKAGE = homebridgePkg.dependencies['@homebridge/hap-nodejs']
   : 'hap-nodejs';
 const homebridgeBuildDir = dirname(homebridgePkg.main);
 
-const { Characteristic, Service, uuid } = await import(HAP_PACKAGE);
+const requireFromHomebridge = createRequire(
+  new URL('../node_modules/homebridge/package.json', import.meta.url),
+);
+const hapPkg = requireFromHomebridge(`${HAP_PACKAGE}/package.json`);
+
+const { Characteristic, Service, uuid } = await import(
+  pathToFileURL(requireFromHomebridge.resolve(HAP_PACKAGE))
+);
 const { PlatformAccessory } = await import(
   new URL(
     `../node_modules/homebridge/${homebridgeBuildDir}/platformAccessory.js`,
@@ -41,7 +59,7 @@ const { PlatformAccessory } = await import(
 
 console.log(
   `Testing against homebridge ${homebridgePkg.version} ` +
-    `(${HAP_PACKAGE} ${manifest(HAP_PACKAGE).version})`,
+    `(${HAP_PACKAGE} ${hapPkg.version})`,
 );
 
 // ---------------------------------------------------------------- fake server
