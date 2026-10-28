@@ -36,6 +36,12 @@ than warranting one of their own.
   own location, so it is the same copy by construction on both the `homebridge@1`
   and `homebridge@2` CI legs.
 
+## [1.0.4] - 2026-10-28
+
+### Updated
+
+- Updated dependencies
+
 ## [1.0.3] - 2026-08-22
 
 ### Added
