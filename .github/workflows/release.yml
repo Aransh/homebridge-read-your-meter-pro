@@ -142,7 +142,7 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           # Trusted publishing needs npm 11.5.1+, which Node 22 does not ship.
-          node-version: 24.x
+          node-version: 26.x
           # No dependency cache: npm advises against one for release builds.
           registry-url: https://registry.npmjs.org
 
